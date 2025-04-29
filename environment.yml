@@ -1,0 +1,20 @@
+name: atlas-env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - ipykernel
+  - jupyterlab
+  - pandas
+  - xmltodict
+  - matplotlib
+  - scikit-image=0.25.2
+  - zarr
+  - shapely
+  - pip  # in case you need pip later
+  - pip:
+    - pylibCZIrw
+
+# Post-build commands
+postBuild:
+  - python -m ipykernel install --user --name atlas-env --display-name "Python ATLAS-env"
