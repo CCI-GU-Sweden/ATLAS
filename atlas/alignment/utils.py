@@ -128,7 +128,7 @@ def get_translation(reference_img, moving_img):
     # Compute phase cross-correlation shift
     detected_shift, _, _ = phase_cross_correlation(crop_ref_img, crop_mov_img, 
                                                 reference_mask=crop_ref_mask, moving_mask=crop_mov_mask, 
-                                                upsample_factor=1, return_error='always')
+                                                upsample_factor=1)
 
     detected_shift = np.round(detected_shift)
     print(f"Detected pixel offset based on crops (row, col): {detected_shift}")
@@ -282,7 +282,8 @@ def pairwise_alignment(alignment_df):
         # ✅ Update the DataFrame correctly
         alignment_df.loc[index, "moving_ROI"] = mov_ROI
         alignment_df.loc[index, "reference_ROI"] = ref_ROI
-        alignment_df.loc[index, "current_shift"] = current_shift
+        print(f"current shift: {current_shift}")
+        alignment_df.at[index, "current_shift"] = current_shift
 
     return alignment_df
 
@@ -341,7 +342,7 @@ def calculate_cumulative_shifts(input_df):
                 raise ValueError(f"Invalid 'current_shift' at index {index}. Expected np.ndarray of shape (2,), got {type(current_shift)}.")
             cumulative_shift = input_df.loc[index - 1, "cumulative_shift"] + current_shift  # Accumulate shifts
 
-        input_df.loc[index, "cumulative_shift"] = cumulative_shift  # ✅ Store cumulative shift
+        input_df.at[index, "cumulative_shift"] = cumulative_shift  # ✅ Store cumulative shift
 
         # ✅ Compute and store cumulative ROI
         moving_ROI = row["moving_ROI"]
