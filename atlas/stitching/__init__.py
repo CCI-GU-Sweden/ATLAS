@@ -1,12 +1,17 @@
 import numpy as np
 import xmltodict
 import pandas as pd
+from pathlib import Path
+import tifffile as tiff
 
 from collections import namedtuple
 from shapely.geometry import box
 from dateutil import parser
 
-from atlas.io import get_pixel_size_from_tif, get_image_size_from_tif
+from atlas.io import get_pixel_size_from_tif, get_image_size_from_tif, extract_s_number
+from atlas.image_analysis import mask_low_and_saturation
+
+from skimage.registration import phase_cross_correlation
 
 def normalize_angle(angle):
     """
@@ -238,3 +243,126 @@ def get_tiles_dataframe(mif_file, buffer_microns):
     mif_tile_df['geometry_shifted'] = mif_tile_df['geometry'].copy()
 
     return mif_tile_df
+
+def get_total_canvas_size(tile_df):
+    # based on the tiles dataframe returns the total size of the canvas needed for stitching
+    buffer_pixels = tile_df['X0_pix'].min()
+    print(f"buffer in pixels based on DF output: {buffer_pixels}")
+
+    # here we generate the full canvas size
+    max_X_row = tile_df.loc[tile_df["X0_pix"].idxmax()]
+    max_Y_row = tile_df.loc[tile_df["Y0_pix"].idxmax()]
+    total_img_width = max_X_row['X0_pix'] + max_X_row['ImageWidth'] + buffer_pixels
+    total_img_height = max_Y_row['Y0_pix'] + max_Y_row['ImageHeight'] + buffer_pixels
+
+    print(f"Total image will be of size including buffer: {total_img_width}x{total_img_height}")
+
+    return int(total_img_width), int(total_img_height)
+
+def stitch_ATLAS_tiles(tiles_df, raw_data_folder, max_shift_pixels=100):
+    # Step 1: Initialize the full canvas and add the first image (reference)
+    first_tif_path = raw_data_folder.joinpath(Path(tiles_df.iloc[0]['Filename']).name)
+    with tiff.TiffFile(first_tif_path) as tif:
+        image_dtype = tif.pages[0].dtype  # Read dtype from metadata
+    
+
+
+    total_img_width, total_img_height = get_total_canvas_size(tiles_df)
+
+    # Initialize full canvas
+    #print(f"shape: {total_img_height, total_img_width}")
+    stitched_img = np.zeros([total_img_height, total_img_width], dtype=image_dtype)
+
+    # First image: Never shifted, it's the reference
+    row0 = tiles_df.iloc[0]
+    box0 = row0['geometry']
+    tif_0 = raw_data_folder.joinpath(Path(row0['Filename']).name)
+    img0 = np.flipud(tiff.imread(tif_0))  # Flip image
+
+    # Place reference image in full image
+    y0, y1 = int(box0.bounds[1]), int(box0.bounds[3])
+    x0, x1 = int(box0.bounds[0]), int(box0.bounds[2])
+    stitched_img[y0:y1, x0:x1] = img0
+
+    # Step 2: Iterate over all remaining images and align them
+    for moving_index in range(1, len(tiles_df)):
+        print(f"\nProcessing tile {moving_index}/{len(tiles_df) - 1}...")
+
+        # Reference tile (previous row)
+        row_ref = tiles_df.iloc[moving_index - 1]
+        box_ref = row_ref['geometry_shifted']
+        tif_ref = raw_data_folder.joinpath(Path(row_ref['Filename']).name)
+        #w_ref = row_ref['ImageWidth']
+        h_ref = row_ref['ImageHeight']
+
+        # Moving tile (current row)
+        row_mov = tiles_df.iloc[moving_index]
+        box_mov = row_mov['geometry_shifted']
+        tif_mov = raw_data_folder.joinpath(Path(row_mov['Filename']).name)
+        img_mov = np.flipud(tiff.imread(tif_mov))  # Flip image
+
+        # Compute the intersection area between reference and moving image
+        ref_box, mov_box = get_overlap_relative(box_reference=box_ref, box_moving=box_mov)
+
+        # Load only the overlapping part of the reference image
+        with tiff.TiffFile(tif_ref) as tif:
+            #due to flip
+            y0_tmp,y1_tmp = int(ref_box.bounds[1]), int(ref_box.bounds[3])
+            y0 = h_ref - y1_tmp
+            y1 = h_ref - y0_tmp
+            x0,x1 = int(ref_box.bounds[0]), int(ref_box.bounds[2])
+            crop_ref = tif.asarray()[y0:y1, x0:x1]
+            crop_ref = np.flipud(crop_ref)
+
+        # Extract the overlapping part of the moving image
+        crop_mov = img_mov[int(mov_box.bounds[1]):int(mov_box.bounds[3]),
+                        int(mov_box.bounds[0]):int(mov_box.bounds[2])]
+
+        # Create masks for saturation and low values
+        mask_ref = np.logical_not(mask_low_and_saturation(crop_ref))
+        mask_mov = np.logical_not(mask_low_and_saturation(crop_mov))
+
+        # Compute phase cross-correlation shift
+        detected_shift, _, _ = phase_cross_correlation(crop_ref, crop_mov, reference_mask=mask_ref, moving_mask=mask_mov)
+
+        print(f"Detected pixel offset (row, col): {-detected_shift}")
+
+        if any(np.abs(detected_shift) > max_shift_pixels):
+            print('something weird, setting offset to 0,0')
+            detected_shift[0] = 0
+            detected_shift[1] = 0
+
+        # Apply shift to position the moving image correctly
+        y0 = int(box_mov.bounds[1] + detected_shift[0])
+        y1 = int(box_mov.bounds[3] + detected_shift[0])
+        x0 = int(box_mov.bounds[0] + detected_shift[1])
+        x1 = int(box_mov.bounds[2] + detected_shift[1])
+
+        # Insert the moved image into the full image
+        stitched_img[y0:y1, x0:x1] = img_mov
+
+        # Update the geometry_shifted column
+        shifted_box = box(minx=x0, miny=y0, maxx=x1, maxy=y1)
+        tiles_df.loc[moving_index, 'geometry_shifted'] = shifted_box
+
+    stitched_img = np.flipud(stitched_img)
+
+    print("\n✅ Stitching process completed. now saving")
+    extracted_number = extract_s_number(first_tif_path)
+
+    # Define the output file path
+    output_tif_path = raw_data_folder.parent.joinpath(f"stitched_image_S_{extracted_number}.tiff")
+    output_cc_path = raw_data_folder.parent.joinpath(f"phaseCC_stitching_S_{extracted_number}.csv")
+    # Save the full image as a TIFF file
+    tiff.imwrite(output_tif_path, stitched_img)
+
+    tiles_df.to_csv(output_cc_path, index=False)
+
+    print("saving done!")
+
+    return stitched_img, tiles_df
+
+# TODO: get a helper function that can stitch based on the csv output, 
+# the current method is memory efficient because I have to load the iamges
+# however I could just load the overlap region in the moving image as I do
+# for the ref. This would split efforts and could perhaps be easier to maintain
