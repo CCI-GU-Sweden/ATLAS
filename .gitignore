@@ -1,3 +1,9 @@
+# Ignore everything inside the data folder
+/data/*
+
+# But not the data folder itself
+!/data/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
