@@ -305,7 +305,7 @@ def extract_s_number(filepath):
     assert isinstance(filepath, Path), "filepath must be a pathlib.Path object"
     assert filepath.is_file(), "filepath must be an existing file"
     
-    pattern = re.compile(r"_S_(\d+)_")
+    pattern = re.compile(r"_S_(\d+)")
     match = pattern.search(filepath.name)  # Only search in the filename
     
     return int(match.group(1)) if match else None  # Return None if no match found
