@@ -10,6 +10,7 @@ from dateutil import parser
 
 from atlas.io import get_pixel_size_from_tif, get_image_size_from_tif, extract_s_number
 from atlas.image_analysis import mask_low_and_saturation
+from atlas.alignment.utils import first_last_true
 
 from skimage.registration import phase_cross_correlation
 
@@ -339,6 +340,24 @@ def stitch_ATLAS_tiles(tiles_df, raw_data_folder, max_shift_pixels=100):
         x1 = int(box_mov.bounds[2] + detected_shift[1])
 
         # Insert the moved image into the full image
+        print(f"target location - y:{y0},{y1}; x:{x0},{x1}")
+        
+        if y0 < 0:
+            print("buffer was too small, y0")
+            img_mov = img_mov[-int(y0):,:]
+        if y1 > stitched_img.shape[0]:
+            print("buffer was too small, y1")
+            d = y1 - stitched_img.shape[0]
+            img_mov = img_mov[0:-int(d),:]
+        if x0 < 0:
+            print("buffer was too small, x0")
+            img_mov = img_mov[:,-int(x0):]
+        if x1 > stitched_img.shape[1]:
+            print("buffer was too small, x1, cropping")
+            d = x1 - stitched_img.shape[1]
+            img_mov = img_mov[:, 0:-int(d)]
+        print(f"inserted img shape: {img_mov.shape}")
+
         stitched_img[y0:y1, x0:x1] = img_mov
 
         # Update the geometry_shifted column
@@ -346,6 +365,14 @@ def stitch_ATLAS_tiles(tiles_df, raw_data_folder, max_shift_pixels=100):
         tiles_df.loc[moving_index, 'geometry_shifted'] = shifted_box
 
     stitched_img = np.flipud(stitched_img)
+
+    stitched_mask = np.logical_not(mask_low_and_saturation(stitched_img))
+
+    # Find ROI from rotated image
+    x0, x1 = first_last_true(np.any(stitched_mask, axis=0))
+    y0, y1 = first_last_true(np.any(stitched_mask, axis=1))
+
+    stitched_img = stitched_img[y0:y1, x0:x1]
 
     print("\n✅ Stitching process completed. now saving")
     extracted_number = extract_s_number(first_tif_path)

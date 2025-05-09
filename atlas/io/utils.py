@@ -310,6 +310,80 @@ def extract_s_number(filepath):
     
     return int(match.group(1)) if match else None  # Return None if no match found
 
+def reorder_files_by_s_number(file_list, new_order):
+    """
+    Reorders a list of file paths based on the S-number in the filename,
+    using a user-defined new order.
+
+    Parameters:
+    ----------
+    file_list : list of Path
+        List of pathlib.Path objects with filenames containing '_S_<number>.tiff'
+    new_order : list of int
+        Desired order of the S-numbers.
+
+    Returns:
+    -------
+    list of Path
+        Reordered list of Path objects matching the specified new_order.
+    """
+    s_number_pattern = re.compile(r"_S_(\d+)\.tiff$", re.IGNORECASE)
+
+    # Build mapping: S-number -> file
+    s_to_file = {}
+    for f in file_list:
+        match = s_number_pattern.search(f.name)
+        if match:
+            s_to_file[int(match.group(1))] = f
+        else:
+            raise ValueError(f"Filename does not match expected pattern: {f.name}")
+
+    # Reorder using the provided order
+    reordered_files = []
+    for s in new_order:
+        if s not in s_to_file:
+            raise ValueError(f"S-number {s} not found in file list")
+        reordered_files.append(s_to_file[s])
+
+    return reordered_files
+
+def parse_shorthand_order(filepath):
+    """
+    Parses a shorthand order file using '...' to indicate a range.
+
+    Example line: 1,...,5,7,9,8,6 → [1, 2, 3, 4, 5, 7, 9, 8, 6]
+
+    Parameters:
+    ----------
+    filepath : str or Path
+        Path to the .txt file containing the shorthand order.
+
+    Returns:
+    -------
+    list of int
+        Expanded list of integers following the shorthand notation.
+    """
+    from pathlib import Path
+
+    text = Path(filepath).read_text().strip()
+    tokens = [t.strip() for t in text.split(',') if t.strip()]
+    
+    result = []
+    i = 0
+    while i < len(tokens):
+        if tokens[i] == '...':
+            raise ValueError("Order string cannot start with '...'")
+        elif i + 2 < len(tokens) and tokens[i + 1] == '...':
+            start = int(tokens[i])
+            end = int(tokens[i + 2])
+            step = 1 if start <= end else -1
+            result.extend(range(start, end + step, step))
+            i += 3  # Skip 'start', '...', 'end'
+        else:
+            result.append(int(tokens[i]))
+            i += 1
+    return result
+
 def rm_tree(pth):
     """
     Recursively removes a directory and all its contents.
@@ -344,3 +418,4 @@ def create_empty_folder(folder_path):
         rm_tree(folder_path)  # Use rm_tree to remove contents
     folder_path.mkdir(parents=True, exist_ok=True)
     print(f"Created new (or emptied) folder: {folder_path}")
+

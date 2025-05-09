@@ -14,6 +14,7 @@ dependencies:
   - pip  # in case you need pip later
   - pip:
     - pylibCZIrw
+    - czitools
 
 # Post-build commands
 postBuild:
