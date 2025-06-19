@@ -125,6 +125,79 @@ def get_translation(reference_img, moving_img):
     crop_mov_img = moving_img[mov_ROI.y0:mov_ROI.y1,mov_ROI.x0:mov_ROI.x1]
     crop_mov_mask = mov_mask[mov_ROI.y0:mov_ROI.y1,mov_ROI.x0:mov_ROI.x1]
 
+    # Find minimal common shape
+    min_y = min(crop_ref_img.shape[0], crop_mov_img.shape[0])
+    min_x = min(crop_ref_img.shape[1], crop_mov_img.shape[1])
+
+    # Crop both to (min_y, min_x) from top-left (0,0)
+    crop_ref_img  = crop_ref_img[:min_y, :min_x]
+    crop_ref_mask = crop_ref_mask[:min_y, :min_x]
+    crop_mov_img  = crop_mov_img[:min_y, :min_x]
+    crop_mov_mask = crop_mov_mask[:min_y, :min_x]
+
+    # Compute phase cross-correlation shift
+    detected_shift, _, _ = phase_cross_correlation(crop_ref_img, crop_mov_img, 
+                                                reference_mask=crop_ref_mask, moving_mask=crop_mov_mask, 
+                                                upsample_factor=1,
+                                                overlap_ratio=.7)
+
+    detected_shift = np.round(detected_shift)
+    print(f"Detected pixel offset based on crops (row, col): {detected_shift}")
+
+    current_shift = detected_shift + crop_shift
+
+    return ref_ROI, mov_ROI, current_shift
+
+def get_translation_old(reference_img, moving_img):
+    """
+    Computes the translation shift between two images using phase cross-correlation.
+
+    This function first determines the largest central object in both images to focus 
+    the alignment on relevant regions. It returns the Regions of Interest (ROI) used 
+    for alignment and the computed translation shift.
+
+    Parameters:
+    ----------
+    reference_img : np.ndarray
+        The reference image.
+    moving_img : np.ndarray
+        The moving image to be aligned.
+    
+    Returns:
+    -------
+    ROI
+        The ROI used from the reference image.
+    ROI
+        The ROI used from the moving image.
+    np.ndarray
+        The final pixel shift (row, col) needed to align the moving image to the reference.
+    """
+    assert isinstance(reference_img, np.ndarray), "reference_img must be a numpy array"
+    assert isinstance(moving_img, np.ndarray), "moving_img must be a numpy array"
+    
+    # Create masks for saturation and low values
+    mask_ref = np.logical_not(mask_low_and_saturation(reference_img))
+    mov_mask = np.logical_not(mask_low_and_saturation(moving_img))
+
+    # find object in the centre of the image
+    x0, x1 = first_last_true(np.any(mask_ref, axis=0))
+    y0, y1 = first_last_true(np.any(mask_ref, axis=1))
+    ref_ROI = ROI(x0=x0, x1=x1, y0=y0, y1=y1)
+
+    x0, x1 = first_last_true(np.any(mov_mask, axis=0))
+    y0, y1 = first_last_true(np.any(mov_mask, axis=1))
+    mov_ROI = ROI(x0=x0, x1=x1, y0=y0, y1=y1)
+
+    crop_shift = np.array([ref_ROI.y0 -mov_ROI.y0, ref_ROI.x0 - mov_ROI.x0])
+    print(f"crop pixel shift: {crop_shift}")
+
+    # crop, so we focus only where we have data
+    crop_ref_img  = reference_img[ref_ROI.y0:ref_ROI.y1,ref_ROI.x0:ref_ROI.x1]
+    crop_ref_mask = mask_ref[ref_ROI.y0:ref_ROI.y1,ref_ROI.x0:ref_ROI.x1]
+
+    crop_mov_img = moving_img[mov_ROI.y0:mov_ROI.y1,mov_ROI.x0:mov_ROI.x1]
+    crop_mov_mask = mov_mask[mov_ROI.y0:mov_ROI.y1,mov_ROI.x0:mov_ROI.x1]
+
     # Compute phase cross-correlation shift
     detected_shift, _, _ = phase_cross_correlation(crop_ref_img, crop_mov_img, 
                                                 reference_mask=crop_ref_mask, moving_mask=crop_mov_mask, 
