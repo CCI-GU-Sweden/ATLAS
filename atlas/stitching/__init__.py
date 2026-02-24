@@ -245,6 +245,62 @@ def get_tiles_dataframe(mif_file, buffer_microns):
 
     return mif_tile_df
 
+def add_tile_overlap_columns(df, geometry_column="geometry"):
+    """
+    Computes pairwise overlap between tiles based on spatial geometry and adds two new columns:
+    - 'overlaps_bool': List of booleans per row indicating which other tiles it overlaps with.
+    - 'overlap_percent': List of integers per row showing the percentage overlap with each tile.
+
+    Notes:
+    - A tile is not considered to overlap with itself (overlap is False and 0%).
+    - The percentage is computed relative to the tile's own area (not the intersected tile's).
+
+    Parameters:
+        df (pd.DataFrame): A DataFrame containing a column with shapely geometries.
+        geometry_column (str): Name of the column containing shapely geometry boxes. Default is "geometry".
+
+    Returns:
+        pd.DataFrame: The same DataFrame with two new columns added.
+    """
+
+    # --- Validations ---
+    assert geometry_column in df.columns, f"'{geometry_column}' column not found in DataFrame."
+    from shapely.geometry.base import BaseGeometry
+    assert all(isinstance(g, BaseGeometry) for g in df[geometry_column]), \
+        f"All entries in '{geometry_column}' must be shapely geometry objects."
+
+    n = len(df)
+    overlaps_bool = []
+    overlaps_percent = []
+
+    for current_idx in range(n):
+        current_box = df[geometry_column][current_idx]
+        bool_row = []
+        percent_row = []
+        for query_idx in range(n):
+            if current_idx == query_idx:
+                bool_row.append(False)
+                percent_row.append(0)
+                continue
+
+            query_box = df[geometry_column][query_idx]
+            if current_box.intersects(query_box):
+                overlap_area = current_box.intersection(query_box).area
+                overlap_percent = int(round((overlap_area / current_box.area) * 100))
+                bool_row.append(True)
+                percent_row.append(overlap_percent)
+            else:
+                bool_row.append(False)
+                percent_row.append(0)
+
+        overlaps_bool.append(bool_row)
+        overlaps_percent.append(percent_row)
+
+    df["overlaps_bool"] = overlaps_bool
+    df["overlap_percent"] = overlaps_percent
+
+    return df
+
 def get_total_canvas_size(tile_df):
     # based on the tiles dataframe returns the total size of the canvas needed for stitching
     buffer_pixels = tile_df['X0_pix'].min()
@@ -329,7 +385,7 @@ def stitch_ATLAS_tiles(tiles_df, raw_data_folder, max_shift_pixels=100):
         print(f"Detected pixel offset (row, col): {-detected_shift}")
 
         if any(np.abs(detected_shift) > max_shift_pixels):
-            print('something weird, setting offset to 0,0')
+            print('detected_shift >  max_shift_pixels, weird, setting offset to 0,0')
             detected_shift[0] = 0
             detected_shift[1] = 0
 

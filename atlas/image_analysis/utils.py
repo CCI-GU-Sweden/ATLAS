@@ -22,7 +22,7 @@ def image_dtype_min_max(img):
     dtype_info = np.iinfo(img.dtype) if np.issubdtype(img.dtype, np.integer) else np.finfo(img.dtype)
     return dtype_info.min, dtype_info.max
 
-def mask_low_and_saturation(img):
+def mask_low_and_saturation(img, min_factor = 1.0, max_factor = 1.0):
     """
     Creates a mask highlighting saturated pixels (min/max values) in the image.
 
@@ -38,7 +38,7 @@ def mask_low_and_saturation(img):
     """
     assert isinstance(img, np.ndarray), "img must be a numpy array"
     min_val, max_val = image_dtype_min_max(img)
-    return (img == min_val) | (img == max_val)
+    return (img <= min_val*min_factor) | (img >= max_val*max_factor)
 
 def rescale_image_intensity(input_image, percentile_low=1, percentile_high=99):
     """
