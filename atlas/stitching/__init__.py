@@ -14,6 +14,8 @@ from atlas.alignment.utils import first_last_true
 
 from skimage.registration import phase_cross_correlation
 
+from collections import defaultdict, deque
+
 def normalize_angle(angle):
     """
     Normalizes an angle to the range [-180, 180] degrees.
@@ -449,3 +451,426 @@ def stitch_ATLAS_tiles(tiles_df, raw_data_folder, max_shift_pixels=100):
 # the current method is memory efficient because I have to load the iamges
 # however I could just load the overlap region in the moving image as I do
 # for the ref. This would split efforts and could perhaps be easier to maintain
+
+def add_tile_overlap_columns(df, geometry_column="geometry"):
+    """
+    Computes pairwise overlap between tiles based on spatial geometry and adds two new columns:
+    - 'overlaps_bool': List of booleans per row indicating which other tiles it overlaps with.
+    - 'overlap_percent': List of integers per row showing the percentage overlap with each tile.
+
+    Notes:
+    - A tile is not considered to overlap with itself (overlap is False and 0%).
+    - The percentage is computed relative to the tile's own area (not the intersected tile's).
+
+    Parameters:
+        df (pd.DataFrame): A DataFrame containing a column with shapely geometries.
+        geometry_column (str): Name of the column containing shapely geometry boxes. Default is "geometry".
+
+    Returns:
+        pd.DataFrame: The same DataFrame with two new columns added.
+    """
+
+    # --- Validations ---
+    assert geometry_column in df.columns, f"'{geometry_column}' column not found in DataFrame."
+    from shapely.geometry.base import BaseGeometry
+    assert all(isinstance(g, BaseGeometry) for g in df[geometry_column]), \
+        f"All entries in '{geometry_column}' must be shapely geometry objects."
+
+    n = len(df)
+    overlaps_bool = []
+    overlaps_percent = []
+
+    for current_idx in range(n):
+        current_box = df[geometry_column][current_idx]
+        bool_row = []
+        percent_row = []
+        for query_idx in range(n):
+            if current_idx == query_idx:
+                bool_row.append(False)
+                percent_row.append(0)
+                continue
+
+            query_box = df[geometry_column][query_idx]
+            if current_box.intersects(query_box):
+                overlap_area = current_box.intersection(query_box).area
+                overlap_percent = int(round((overlap_area / current_box.area) * 100))
+                bool_row.append(True)
+                percent_row.append(overlap_percent)
+            else:
+                bool_row.append(False)
+                percent_row.append(0)
+
+        overlaps_bool.append(bool_row)
+        overlaps_percent.append(percent_row)
+
+    df["overlaps_bool"] = overlaps_bool
+    df["overlap_percent"] = overlaps_percent
+
+    return df
+
+def match_tiles(input_df, reference_idx, min_overlap_percent=2):
+    """
+    Compute stitching cost and pixel-shift vectors between a reference tile and all other tiles.
+
+    Parameters
+    ----------
+    input_df : pandas.DataFrame
+        DataFrame containing tile metadata. Must include the following columns:
+        - 'geometry' : shapely.geometry.Polygon bounding box of the tile
+        - 'ImageWidth' : width in pixels
+        - 'ImageHeight' : height in pixels
+        - 'Filename' : TIFF filename
+        - 'raw_data_folder' : pathlib.Path to folder containing the raw TIFF
+        - 'overlap_percent' : list-like of overlap percentages with all other tiles
+    reference_idx : int
+        Index of the tile used as the reference for cost and shift computation.
+    min_overlap_percent : float, optional (default=2)
+        Minimum overlap (%) required to attempt matching.
+
+    Returns
+    -------
+    cost_list : list of float
+        A list of stitching costs, one per tile.
+    shift_list : list of np.ndarray, shape (2,)
+        A list of detected pixel shifts (row, col) from each tile to the reference tile.
+        If no overlap or too small overlap, shift is np.zeros(2).
+    """
+
+    # ------------------------------------------------------------------
+    # Assertions: Validate DataFrame structure
+    # ------------------------------------------------------------------
+    required_cols = [
+        'geometry', 'ImageWidth', 'ImageHeight',
+        'Filename', 'raw_data_folder', 'overlap_percent'
+    ]
+    for col in required_cols:
+        assert col in input_df.columns, f"Missing required column: '{col}'"
+
+    assert 0 <= reference_idx < len(input_df), "reference_idx is out of DataFrame bounds"
+    assert isinstance(min_overlap_percent, (int, float)), "min_overlap_percent must be numeric"
+
+    # ------------------------------------------------------------------
+    # Setup reference tile
+    # ------------------------------------------------------------------
+    row_ref = input_df.iloc[reference_idx]
+    geometry_ref = row_ref['geometry']
+    w_ref = row_ref['ImageWidth']
+    h_ref = row_ref['ImageHeight']
+
+    # Load dtype from TIFF
+    ref_tif_path = row_ref.raw_data_folder.joinpath(Path(row_ref.Filename).name)
+    with tiff.TiffFile(ref_tif_path) as tif:
+        image_dtype = tif.pages[0].dtype
+
+    print(f"\nProcessing reference tile {reference_idx}...")
+
+    # Prepare outputs
+    n_tiles = len(input_df)
+    cost_list = []
+    shift_list = []
+
+    # ------------------------------------------------------------------
+    # Compare reference tile to all other tiles
+    # ------------------------------------------------------------------
+    for query_idx in range(n_tiles):
+        print(f"\nComparing reference {reference_idx} to tile {query_idx}...")
+
+        row_mov = input_df.iloc[query_idx]
+        overlap_percentage = row_ref.overlap_percent[query_idx]
+
+        print(f"Overlap %: {overlap_percentage}")
+
+        # Not enough overlap → default cost/shift
+        if overlap_percentage < min_overlap_percent:
+            print("Too little overlap: assigning cost=1.0 and shift=[0,0]")
+            cost_list.append(np.float64(1.0))
+            shift_list.append(np.zeros(2))
+            continue
+
+        # ------------------------------------------------------------------
+        # Compute overlapping bounding boxes
+        # ------------------------------------------------------------------
+        geometry_mov = row_mov['geometry']
+        mov_tif_path = row_ref.raw_data_folder.joinpath(Path(row_mov.Filename).name)
+
+        ref_box, mov_box = get_overlap_relative(
+            box_reference=geometry_ref,
+            box_moving=geometry_mov
+        )
+
+        # ------------------------------------------------------------------
+        # Load overlapping region from reference image
+        # ------------------------------------------------------------------
+        with tiff.TiffFile(ref_tif_path) as tif:
+            y0_tmp, y1_tmp = int(ref_box.bounds[1]), int(ref_box.bounds[3])
+            y0, y1 = h_ref - y1_tmp, h_ref - y0_tmp  # flip correction
+            x0, x1 = int(ref_box.bounds[0]), int(ref_box.bounds[2])
+            crop_ref = np.flipud(tif.asarray()[y0:y1, x0:x1])
+
+        # ------------------------------------------------------------------
+        # Load overlapping region from moving image
+        # ------------------------------------------------------------------
+        with tiff.TiffFile(mov_tif_path) as tif:
+            y0_tmp, y1_tmp = int(mov_box.bounds[1]), int(mov_box.bounds[3])
+            y0, y1 = h_ref - y1_tmp, h_ref - y0_tmp
+            x0, x1 = int(mov_box.bounds[0]), int(mov_box.bounds[2])
+            crop_mov = np.flipud(tif.asarray()[y0:y1, x0:x1])
+
+        # ------------------------------------------------------------------
+        # Mask & threshold computation
+        # ------------------------------------------------------------------
+        mask_ref = ~mask_low_and_saturation(crop_ref)
+        mask_mov = ~mask_low_and_saturation(crop_mov)
+
+        current_vals = np.concatenate([
+            crop_ref[mask_ref].ravel(),
+            crop_mov[mask_mov].ravel()
+        ])
+
+        pix_mean = current_vals.mean()
+        pix_std = current_vals.std()
+        pix_th = pix_mean + 2 * pix_std
+
+        mask_mov = np.logical_and(mask_mov, crop_mov > pix_th)
+        mask_ref = np.logical_and(mask_ref, crop_ref > pix_th)
+
+        mask_pixels = mask_mov.sum()
+        mask_pixels_per = mask_pixels / mask_mov.size
+
+        # ------------------------------------------------------------------
+        # Phase cross-correlation (shift detection)
+        # ------------------------------------------------------------------
+        detected_shift, _, _ = phase_cross_correlation(
+            crop_ref,
+            crop_mov,
+            reference_mask=mask_ref,
+            moving_mask=mask_mov
+        )
+
+        print(f"Detected pixel offset (row, col): {-detected_shift}")
+
+        # ------------------------------------------------------------------
+        # Cost computation
+        # ------------------------------------------------------------------
+        ref_std = crop_ref[mask_ref].std()
+        mov_std = crop_mov[mask_mov].std()
+        avg_std = (ref_std + mov_std) / 2
+
+        cost = 1.0 / (1e-6 + avg_std * mask_pixels_per * overlap_percentage)
+        cost_list.append(cost)
+        shift_list.append(detected_shift)
+
+    return cost_list, shift_list
+
+def build_adjacency_matrix_from_costs(df, cost_column='stitching_costs'):
+    """
+    Construct an adjacency matrix from stitching costs to be used for MST computation.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame containing stitching cost vectors for each tile.
+    cost_column : str, optional
+        Name of the column containing lists/arrays of stitching costs (default: 'stitching_costs').
+
+    Returns
+    -------
+    adj_matrix : np.ndarray, shape (n_tiles, n_tiles)
+        Adjacency matrix with np.inf for non-edges and stitching costs for valid connections.
+    """
+    assert cost_column in df.columns, f"Column '{cost_column}' not found in DataFrame."
+    
+    n_tiles = len(df)
+    adj_matrix = np.ones((n_tiles, n_tiles))  # start with 1s (worst or no connection)
+
+    # Fill the matrix with actual stitching costs
+    for i in range(n_tiles):
+        cost_vector = df['stitching_costs'][i]
+        for j in range(n_tiles):
+            if i != j and cost_vector[j] < 1.0:
+                adj_matrix[i][j] = cost_vector[j]
+            else:
+                adj_matrix[i][j] = np.inf  # No edge (self or non-overlap)
+    
+    return adj_matrix
+
+def find_all_paths_to_root(mst_sparse, root):
+    mst_edges = np.transpose(mst_sparse.nonzero())
+    adj = defaultdict(list)
+
+    for i, j in mst_edges:
+        adj[i].append(j)
+        adj[j].append(i)  # because it's an undirected tree
+    #adj = build_adjacency_from_mst(mst)
+
+    paths = {}
+
+    def dfs(node, parent, path):
+        path = path + [node]
+        paths[node] = path[::-1]  # reversed: from node to root
+        for neighbor in adj[node]:
+            if neighbor != parent:
+                dfs(neighbor, node, path)
+
+    dfs(root, None, [])
+    return paths
+
+def path_to_pairs(path):
+    """
+    Given a list of tile indices representing a stitching path,
+    return a list of (moving_tile, reference_tile) pairs.
+    The last pair is a self-reference (e.g., (0, 0)).
+    """
+    pairs = []
+    for i in range(len(path)):
+        current = path[i]
+        if i < len(path) - 1:
+            next_ = path[i + 1]
+        else:
+            next_ = current  # last: self-reference
+        pairs.append((current, next_))
+    return pairs
+
+def build_transform_dict_from_mst(mif_tile_df, mst, reference_tile=0, stitching_shift_column='stitching_shifts'):
+    """
+    Build a dictionary of stitching transformations for all tiles, using a minimum spanning tree (MST)
+    and a selected reference tile.
+
+    Parameters
+    ----------
+    mif_tile_df : pd.DataFrame
+        DataFrame with per-tile data, must contain a column of stitching shifts (vectors),
+        and be indexable by tile index.
+    mst : scipy.sparse.csr_matrix
+        Minimum spanning tree in sparse matrix form (output of minimum_spanning_tree).
+    reference_tile : int, optional
+        Tile index to use as the reference (default is 0).
+    stitching_shift_column : str, optional
+        Column name in the DataFrame that stores per-tile stitching shift vectors (default: 'stitching_shifts').
+
+    Returns
+    -------
+    transform_dict : dict
+        Dictionary with keys like "t21" meaning transform from tile 2 to tile 1, and values as np.array of shape (2,).
+    """
+
+    # The MST will be used to calculate the transofrmation matrices between each tile and a reference tile.
+    # For the moment I just pick 0 as reference but maybe there is a better way, in general I dont think it matters much.
+
+    # User input reference_tile and mst, output transform dictionary
+    paths_to_reference = find_all_paths_to_root(mst, reference_tile)
+
+    mst_dense = mst.toarray()
+    # print("MST adjacency matrix (only connected edges):")
+    # print(mst_dense)
+
+    # now calculate inital transforms and store them in a dictionary, by initial I mean they are given by the local conection between tiles
+    transform_dict = {}
+    mst_edges = np.transpose(mst.nonzero())  # array of (idx_ref, idx_mov) pairs
+
+    for idx_ref, idx_mov in mst_edges:
+
+        cost = mst_dense[idx_ref][idx_mov]
+        # print(f"Edge: Reference Tile {idx_ref} - Moving Tile {idx_mov} with cost {cost}")
+
+        # fetch the transform from the dataframe, in this case is a simple translation so a x,y shift vector
+        row_ref = mif_tile_df.iloc[idx_ref]
+        t_value = row_ref[stitching_shift_column][idx_mov]
+
+        # Create key in the transform dictionary using the format "t{mov}{ref}"
+        key = f"t{idx_mov}{idx_ref}"
+        transform_dict[key] = t_value
+
+        # now add the oposite for symetry, so we can move back and forth
+        key = f"t{idx_ref}{idx_mov}"
+        transform_dict[key] = -t_value
+
+    # now add the special case of the reference tile to itsef as all paths should lead to this
+    key = f"t{reference_tile}{reference_tile}"
+    transform_dict[key] = np.zeros(2)
+
+    # now add all the long range connections where I need to traverse more than one tile edge
+    n_tiles = mif_tile_df.shape[0]
+    for query_tile in range(n_tiles):
+        t_desired = f"t{query_tile}{reference_tile}"
+        if t_desired in transform_dict:
+            pass
+            # print(f"Key {t_desired} exists!, I can do the transform!")
+        else:
+            # print(f"Key {t_desired} does not exists!, calculating path")
+            chain = paths_to_reference[query_tile]
+
+            t_value = np.zeros(2)
+            pairs = path_to_pairs(chain)
+            for pair in pairs:
+                key = f"t{pair[0]}{pair[1]}"
+                # print(transform_dict[key])
+                t_value = t_value + transform_dict[key]
+
+            transform_dict[t_desired] = t_value
+
+    return transform_dict
+
+def apply_transforms_and_stitch(mif_tile_df, transform_dict, reference_tile=0):
+    """
+    Apply computed transforms to all tiles and create a single stitched image.
+
+    Parameters
+    ----------
+    mif_tile_df : pd.DataFrame
+        DataFrame containing tile metadata, including:
+        - 'Filename' : filename of the tile
+        - 'raw_data_folder' : path to folder containing TIFF files
+        - 'geometry' : shapely box describing where tile is placed
+    transform_dict : dict
+        Dictionary of shifts (2D vectors) keyed as 'tXY' meaning from tile X to tile Y.
+    reference_tile : int,
+        Index of the reference tile (default is 0).
+
+    Returns
+    -------
+    stitched_img : np.ndarray
+        The final stitched image with all tiles placed using their transforms.
+    """
+
+    # apply transform, user inputs are transform_dict and mif_tile_df, output is the stitched_img
+
+    # TODO: improve canvas size estimation using max shift, but for now use fixed version
+    max_shift_pixels = max(np.abs(val).max() for val in transform_dict.values())
+    # print(max_shift_pixels)
+
+    total_img_width, total_img_height = get_total_canvas_size(mif_tile_df)
+
+    stitched_img = None  # initialize later
+
+    for index, row in mif_tile_df.iterrows():
+        print(f"\nIndex: {index}, Filename: {row['Filename']}")
+
+        t_key = f"t{index}{reference_tile}"
+        print(t_key)
+
+        t_val = transform_dict[t_key]
+        print(t_val.shape)
+
+        # Load current tile image and flip vertically
+        tif_current = row.raw_data_folder.joinpath(Path(row.Filename).name)
+        img_current = np.flipud(tiff.imread(tif_current))  # Flip image
+
+        # Initialize stitched canvas on first iteration
+        if index == 0:
+            stitched_img = np.zeros(
+                [total_img_height, total_img_width],
+                dtype=img_current.dtype
+            )
+            #extracted_number = extract_s_number(tif_current)
+
+        # Compute shifted bounding box position
+        box_mov = row.geometry
+        y0 = int(box_mov.bounds[1] + t_val[0])
+        y1 = int(box_mov.bounds[3] + t_val[0])
+        x0 = int(box_mov.bounds[0] + t_val[1])
+        x1 = int(box_mov.bounds[2] + t_val[1])
+
+        stitched_img[y0:y1, x0:x1] = img_current
+
+    return stitched_img
