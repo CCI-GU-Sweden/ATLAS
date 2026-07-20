@@ -303,10 +303,15 @@ def add_tile_overlap_columns(df, geometry_column="geometry"):
 
     return df
 
-def get_total_canvas_size(tile_df):
+def get_total_canvas_size(tile_df, buffer_pixels):
     # based on the tiles dataframe returns the total size of the canvas needed for stitching
-    buffer_pixels = tile_df['X0_pix'].min()
-    print(f"buffer in pixels based on DF output: {buffer_pixels}")
+    if buffer_pixels == 0:
+        buffer_pixels = tile_df['X0_pix'].min()
+        print(f"buffer in pixels based on DF output: {buffer_pixels}")
+    else:
+        buffer_pixels = np.ceil(buffer_pixels).astype(int)
+        print(f"buffer in pixels based on displacement: {buffer_pixels}")
+        
 
     # here we generate the full canvas size
     max_X_row = tile_df.loc[tile_df["X0_pix"].idxmax()]
@@ -835,22 +840,61 @@ def apply_transforms_and_stitch(mif_tile_df, transform_dict, reference_tile=0):
 
     # apply transform, user inputs are transform_dict and mif_tile_df, output is the stitched_img
 
-    # TODO: improve canvas size estimation using max shift, but for now use fixed version
     max_shift_pixels = max(np.abs(val).max() for val in transform_dict.values())
-    # print(max_shift_pixels)
 
-    total_img_width, total_img_height = get_total_canvas_size(mif_tile_df)
+    #TODO: after testing remove this part is not used any longer
+    total_img_width, total_img_height = get_total_canvas_size(mif_tile_df, max_shift_pixels)
 
     stitched_img = None  # initialize later
+
+    ymin = 0
+    ymax = 0
+    xmin = 0
+    xmax = 0
+
+    for index, row in mif_tile_df.iterrows():
+        #print(f"\nIndex: {index}, Filename: {row['Filename']}")
+        t_key = f"t{index}{reference_tile}"
+        #print(t_key)
+        t_val = transform_dict[t_key]
+        #print(t_val)
+        
+        # Compute shifted bounding box position
+        box_mov = row.geometry
+        y0 = int(box_mov.bounds[1] + t_val[0])
+        y1 = int(box_mov.bounds[3] + t_val[0])
+        x0 = int(box_mov.bounds[0] + t_val[1])
+        x1 = int(box_mov.bounds[2] + t_val[1])
+
+        if y0 < ymin:
+            ymin = y0
+        if y1 > ymax:
+            ymax = y1
+
+        if x0 < xmin:
+            xmin = x0
+        if x1 > xmax:
+            xmax = x1
+
+        #print(f"idx: {y0}-{y1}; {x0}-{x1}")
+    ycorr = 0
+    xcorr = 0
+    if ymin < 0:
+        ycorr = -ymin
+    if xmin < 0:
+        xcorr = -xmin
+    
+    #print(f"img idx based on geometries: {ymin}-{ymax}; {xmin}-{xmax}")
+    img_width = xmax + xcorr
+    img_height = ymax + ycorr
+    print(f"img shape based on geometries: h-{img_height}; w-{img_width}")
 
     for index, row in mif_tile_df.iterrows():
         print(f"\nIndex: {index}, Filename: {row['Filename']}")
 
         t_key = f"t{index}{reference_tile}"
-        print(t_key)
 
         t_val = transform_dict[t_key]
-        print(t_val.shape)
 
         # Load current tile image and flip vertically
         tif_current = row.raw_data_folder.joinpath(Path(row.Filename).name)
@@ -859,17 +903,20 @@ def apply_transforms_and_stitch(mif_tile_df, transform_dict, reference_tile=0):
         # Initialize stitched canvas on first iteration
         if index == 0:
             stitched_img = np.zeros(
-                [total_img_height, total_img_width],
+                [img_height, img_width],
                 dtype=img_current.dtype
             )
+            print(stitched_img.shape)
             #extracted_number = extract_s_number(tif_current)
 
         # Compute shifted bounding box position
         box_mov = row.geometry
-        y0 = int(box_mov.bounds[1] + t_val[0])
-        y1 = int(box_mov.bounds[3] + t_val[0])
-        x0 = int(box_mov.bounds[0] + t_val[1])
-        x1 = int(box_mov.bounds[2] + t_val[1])
+        y0 = int(box_mov.bounds[1] + t_val[0])+ycorr
+        y1 = int(box_mov.bounds[3] + t_val[0])+ycorr
+        x0 = int(box_mov.bounds[0] + t_val[1])+xcorr
+        x1 = int(box_mov.bounds[2] + t_val[1])+xcorr
+
+        print(f"idx: {y0}-{y1}; {x0}-{x1}")
 
         stitched_img[y0:y1, x0:x1] = img_current
 
