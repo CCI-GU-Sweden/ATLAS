@@ -9,6 +9,7 @@ import tifffile as tiff
 from skimage.registration import phase_cross_correlation
 from skimage.transform import downscale_local_mean, estimate_transform, SimilarityTransform
 
+
 class ROI(NamedTuple):
     """
     Defines a Region of Interest (ROI) with x and y boundaries.
