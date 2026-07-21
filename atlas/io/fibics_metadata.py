@@ -4,7 +4,7 @@ Functions for handling Fibics metadata.
 
 import xmltodict
 import tifffile as tiff
-from pathlib import Path
+from pathlib import Path, PureWindowsPath, PurePosixPath
 import numpy as np
 
 def extract_tif_metadata(tif_path):
@@ -22,6 +22,7 @@ def extract_tif_metadata(tif_path):
         A dictionary containing the extracted metadata. If the 'FibicsXML' key is
         missing, an empty dictionary is returned instead.
     """
+
     assert isinstance(tif_path, Path), "tif_path must be a pathlib.Path object"
     assert tif_path.is_file(), "tif_path must be an existing file"
     
@@ -59,7 +60,13 @@ def get_pixel_size_from_tif(filename, raw_data_folder):
     float
         The pixel size in microns, or NaN if extraction fails.
     """
-    tif_file = raw_data_folder.joinpath(Path(filename).name)
+
+    if "\\" in filename:
+        tif_name = PureWindowsPath(filename).name
+        tif_file = raw_data_folder.joinpath(tif_name)
+    else:
+        tif_name = PurePosixPath(filename).name
+        tif_file = raw_data_folder.joinpath(tif_name)
 
     try:
         tif_metadata = extract_tif_metadata(tif_file)
@@ -69,7 +76,7 @@ def get_pixel_size_from_tif(filename, raw_data_folder):
     except (KeyError, ValueError, FileNotFoundError) as e:
         print(f"Warning: Could not extract pixel size for {filename}: {e}")
         return float('nan')
-    
+
 
 def get_image_size_from_tif(filename, raw_data_folder):
     """
@@ -88,7 +95,12 @@ def get_image_size_from_tif(filename, raw_data_folder):
         The image width and height extracted from the TIFF metadata.
         Returns (NaN, NaN) if extraction fails.
     """
-    tif_file = raw_data_folder.joinpath(Path(filename).name)
+    if "\\" in filename:
+        tif_name = PureWindowsPath(filename).name
+        tif_file = raw_data_folder.joinpath(tif_name)
+    else:
+        tif_name = PurePosixPath(filename).name
+        tif_file = raw_data_folder.joinpath(tif_name)
 
     try:
         # Extract metadata
