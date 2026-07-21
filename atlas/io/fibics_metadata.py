@@ -62,21 +62,12 @@ def get_pixel_size_from_tif(filename, raw_data_folder):
     float
         The pixel size in microns, or NaN if extraction fails.
     """
-    # print(filename)
-    # print(Path(filename))
-    # print(Path(filename).name)
-
     if "\\" in filename:
         tif_name = PureWindowsPath(filename).name
         tif_file = raw_data_folder.joinpath(tif_name)
     else:
         tif_name = PurePosixPath(filename).name
         tif_file = raw_data_folder.joinpath(tif_name)
-
-    # print('get pixel size:')
-    # print(tif_name)
-    # print(tif_file)
-    # print('')
 
     try:
         tif_metadata = extract_tif_metadata(tif_file)
@@ -113,8 +104,6 @@ def get_image_size_from_tif(filename, raw_data_folder):
     else:
         tif_name = PurePosixPath(filename).name
         tif_file = raw_data_folder.joinpath(tif_name)
-        
-    # tif_file = raw_data_folder.joinpath(Path(filename).name)
 
     try:
         # Extract metadata
