@@ -40,6 +40,51 @@ def mask_low_and_saturation(img, min_factor = 1.0, max_factor = 1.0):
     min_val, max_val = image_dtype_min_max(img)
     return (img <= min_val*min_factor) | (img >= max_val*max_factor)
 
+def calculate_mask_roi(mask):
+    """
+    Compute the tight bounding box (ROI) around valid pixels in a boolean mask.
+
+    Parameters
+    ----------
+    mask : np.ndarray (bool)
+        Boolean array where True marks valid pixels and False invalid pixels.
+
+    Returns
+    -------
+    x0 : int
+        Left (minimum column index) of the ROI (inclusive).
+    x1 : int
+        Right (maximum column index) of the ROI (exclusive, suitable for slicing).
+    y0 : int
+        Top (minimum row index) of the ROI (inclusive).
+    y1 : int
+        Bottom (maximum row index) of the ROI (exclusive, suitable for slicing).
+
+    Raises
+    ------
+    ValueError
+        If the mask contains no valid (True) pixels.
+
+    Notes
+    -----
+    - To crop an image `img` using this ROI, use:
+
+        `img_cropped = img[y0:y1, x0:x1]`
+
+      (row = y, col = x).
+    """
+    assert isinstance(mask, np.ndarray), "mask must be a numpy array"
+    assert mask.dtype == bool, "mask must be a boolean array"
+
+    xs, ys = np.nonzero(mask)
+    if ys.size == 0:
+        raise ValueError("Mask contains no valid (True) pixels.")
+
+    y0, y1 = ys.min(), ys.max() + 1  # +1 to make it slice-exclusive
+    x0, x1 = xs.min(), xs.max() + 1
+
+    return x0, x1, y0, y1
+
 def rescale_image_intensity(input_image, percentile_low=1, percentile_high=99):
     """
     Rescales the intensity of an image based on given percentiles while maintaining its dtype.

@@ -34,6 +34,7 @@ dependencies = [
     "shapely",
     "pylibCZIrw>=6.1.0",
     "czitools",
+    "scipy",
     "scikit-image==0.25.2",
     "tifffile",
     "python-dateutil"
