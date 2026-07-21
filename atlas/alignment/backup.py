@@ -1,8 +1,7 @@
+import matplotlib.pyplot as plt
 import numpy as np
-from scipy.fft import fft2, fftshift
-from skimage.transform import warp_polar, rotate
 from skimage.registration import phase_cross_correlation
-from scipy.ndimage import shift as nd_shift
+from skimage.transform import rotate, warp_polar
 
 
 def crop_to_center_overlap(img1, img2):
@@ -42,6 +41,8 @@ def crop_to_center_overlap(img1, img2):
     return cropped1, cropped2
 
 def estimate_rotation_translation_fourier(reference_img, moving_img, upsample_factor=10):
+    from scipy.fft import fft2, fftshift
+    from scipy.ndimage import shift as nd_shift
     assert reference_img.shape == moving_img.shape, "Images must be the same shape"
 
     # Store original dtype
@@ -77,6 +78,7 @@ def estimate_rotation_translation_fourier(reference_img, moving_img, upsample_fa
     return rotation_deg, translation_shift, aligned_final
 
 def estimate_rotation_translation_fourier_no_rotation(reference_img, moving_img, upsample_factor=10):
+    from scipy.fft import fft2, fftshift
     assert reference_img.shape == moving_img.shape, "Images must be the same shape"
     #orig_dtype = moving_img.dtype
 
