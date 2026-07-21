@@ -6,11 +6,13 @@ Submodules:
 - stitching: Image stitching functions.
 - alignment: Image alignment functions.
 - image_analysis: Image processing and analysis functions.
+- misc: General visualization and utility functions.
 """
 
-from . import io
-from . import stitching
 from . import alignment
 from . import image_analysis
+from . import io
+from . import misc
+from . import stitching
 
-__all__ = ["io", "stitching", "alignment", "image_analysis"]
+__all__ = ["io", "stitching", "alignment", "image_analysis", "misc"]

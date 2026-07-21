@@ -13,6 +13,8 @@ from atlas.image_analysis import mask_low_and_saturation
 from atlas.alignment.utils import first_last_true
 
 from skimage.registration import phase_cross_correlation
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import minimum_spanning_tree
 
 from collections import defaultdict, deque
 
@@ -323,7 +325,15 @@ def get_total_canvas_size(tile_df, buffer_pixels):
 
     return int(total_img_width), int(total_img_height)
 
-def stitch_ATLAS_tiles(tiles_df, raw_data_folder, max_shift_pixels=100):
+def stitch_ATLAS_tiles_old(tiles_df, raw_data_folder, max_shift_pixels=100):
+    # NOTE:
+    # `stitch_ATLAS_tiles_old` is the legacy stitching implementation. It aligns
+    # tiles sequentially, using the preceding tile as the reference.
+    # we now replace it with overlap matching followed by a
+    # minimum spanning tree, allowing transforms to be calculated relative
+    # to a common reference tile. The legacy function remains in for historical reference.
+
+
     # Step 1: Initialize the full canvas and add the first image (reference)
     first_tif_path = raw_data_folder.joinpath(Path(tiles_df.iloc[0]['Filename']).name)
     with tiff.TiffFile(first_tif_path) as tif:
@@ -513,15 +523,24 @@ def add_tile_overlap_columns(df, geometry_column="geometry"):
 
     return df
 
-def match_tiles(input_df, reference_idx, min_overlap_percent=2):
+def match_tiles(input_df, reference_idx, min_overlap_percent=2, std_th=2, do_hanning=True):
     """
     Compute stitching cost and pixel-shift vectors between a reference tile and all other tiles.
+
+    For each tile, the function:
+      1) checks the precomputed overlap percentage against `min_overlap_percent`,
+      2) extracts the overlapping image regions using the tiles' geometries,
+      3) builds masks to exclude low-value and saturated pixels,
+      4) optionally refines the masks by keeping only pixels above a global
+         intensity threshold derived from mean + std_th * std of valid pixels,
+      5) estimates translation via masked phase cross-correlation,
+      6) computes a heuristic stitching cost.
 
     Parameters
     ----------
     input_df : pandas.DataFrame
-        DataFrame containing tile metadata. Must include the following columns:
-        - 'geometry' : shapely.geometry.Polygon bounding box of the tile
+        DataFrame containing tile metadata. Must include:
+        - 'geometry' : shapely geometry (tile bounding box in global space)
         - 'ImageWidth' : width in pixels
         - 'ImageHeight' : height in pixels
         - 'Filename' : TIFF filename
@@ -530,15 +549,50 @@ def match_tiles(input_df, reference_idx, min_overlap_percent=2):
     reference_idx : int
         Index of the tile used as the reference for cost and shift computation.
     min_overlap_percent : float, optional (default=2)
-        Minimum overlap (%) required to attempt matching.
+        Minimum overlap (%) required to attempt matching. Tiles below this threshold
+        get cost=1.0 and shift=[0, 0].
+    std_th : float or None or False, optional (default=2)
+        Optional intensity-based mask refinement.
+        - If None or False: do not apply intensity thresholding.
+        - If a number: compute pix_th = mean + std_th * std using valid pixels
+          from both overlap crops and keep only pixels > pix_th in both masks.
+        Note: This assumes foreground is brighter than background; for inverted
+        contrast (e.g., some BSD images), this may reject signal.
+    do_hanning : bool, optional (default=True)
+        If True, multiply each overlap crop by a two-dimensional Hanning window
+        before phase cross-correlation. This can reduce boundary artifacts, but it
+        also affects the intensity standard deviations used to compute the cost.
 
     Returns
     -------
     cost_list : list of float
-        A list of stitching costs, one per tile.
+        One stitching cost per tile, in the positional row order of ``input_df``.
+        Lower values indicate stronger candidate connections. Tiles below
+        ``min_overlap_percent`` receive a cost of 1.0.
     shift_list : list of np.ndarray, shape (2,)
-        A list of detected pixel shifts (row, col) from each tile to the reference tile.
-        If no overlap or too small overlap, shift is np.zeros(2).
+        One detected pixel shift per tile, in the positional row order of
+        ``input_df``. Each shift is ``(row, col)`` and aligns that tile to the
+        reference tile. If overlap is too small, the shift is ``np.zeros(2)``.
+
+    Raises
+    ------
+    AssertionError
+        If a required DataFrame column is missing, ``reference_idx`` is outside
+        the positional bounds of ``input_df``, or ``min_overlap_percent`` is not
+        numeric.
+
+    Notes
+    -----
+    - Shifts follow the `skimage.registration.phase_cross_correlation` convention
+      (row, col). Apply with care regarding sign depending on your downstream usage.
+    - Masked phase cross-correlation may return NaNs for the error metric (known behavior);
+      this function does not use that error value.
+    - The heuristic cost is inversely proportional to the average masked intensity
+      standard deviation, the fraction of valid moving-mask pixels, and the overlap
+      percentage. It is intended for relative edge ranking, not as a normalized
+      registration error.
+    - If no valid intensities remain after the initial low/saturation masks, the
+      optional intensity-threshold refinement is skipped.
     """
 
     # ------------------------------------------------------------------
@@ -632,19 +686,38 @@ def match_tiles(input_df, reference_idx, min_overlap_percent=2):
             crop_mov[mask_mov].ravel()
         ])
 
-        pix_mean = current_vals.mean()
-        pix_std = current_vals.std()
-        pix_th = pix_mean + 2 * pix_std
+        if current_vals.size == 0:
+            # fall back to no intensity thresholding
+            pix_mean = pix_std = None
+        else:
+            pix_mean = current_vals.mean()
+            pix_std = current_vals.std()
 
-        mask_mov = np.logical_and(mask_mov, crop_mov > pix_th)
-        mask_ref = np.logical_and(mask_ref, crop_ref > pix_th)
+        if (std_th is not None and std_th is not False) and (current_vals.size > 0):
+            pix_th = pix_mean + float(std_th) * pix_std
+            mask_mov = np.logical_and(mask_mov, crop_mov > pix_th)
+            mask_ref = np.logical_and(mask_ref, crop_ref > pix_th)
 
         mask_pixels = mask_mov.sum()
         mask_pixels_per = mask_pixels / mask_mov.size
 
+        # optional: reduce edge effects (often helps a lot)
+        if do_hanning:
+                
+            wy = np.hanning(crop_ref.shape[0])
+            wx = np.hanning(crop_ref.shape[1])
+            win = wy[:, None] * wx[None, :]
+            crop_ref = crop_ref * win
+
+            wy = np.hanning(crop_mov.shape[0])
+            wx = np.hanning(crop_mov.shape[1])
+            win = wy[:, None] * wx[None, :]
+            crop_mov = crop_mov * win
+
         # ------------------------------------------------------------------
         # Phase cross-correlation (shift detection)
         # ------------------------------------------------------------------
+        #show_two_images(mask_ref, mask_mov)
         detected_shift, _, _ = phase_cross_correlation(
             crop_ref,
             crop_mov,
@@ -921,3 +994,147 @@ def apply_transforms_and_stitch(mif_tile_df, transform_dict, reference_tile=0):
         stitched_img[y0:y1, x0:x1] = img_current
 
     return stitched_img
+
+
+def stitch_ATLAS_tiles(
+    mif_file,
+    *,
+    buffer_microns=1,
+    max_shift_pixels=200,
+    min_overlap_percent=2,
+    std_th=0,
+    do_hanning=False,
+    reference_tile=0,
+):
+    """
+    Stitch the tiles described by a FIBICS .ve-mif file.
+
+    The function calculates pairwise tile registrations, constructs a
+    minimum spanning tree, and places every tile relative to a selected
+    reference tile.
+
+    It performs no output-file naming or saving.
+
+    Parameters
+    ----------
+    mif_file : pathlib.Path
+        Path to the .ve-mif file. The corresponding TIFF tiles are
+        expected in the same directory.
+    buffer_microns : float, default=1
+        Buffer added around the nominal tile positions.
+    max_shift_pixels : float, default=200
+        Maximum accepted Euclidean registration shift. Larger shifts
+        are replaced with a zero shift and a weak matching cost.
+    min_overlap_percent : float, default=2
+        Minimum tile overlap required for registration.
+    std_th : float or None, default=0
+        Intensity threshold passed to ``match_tiles``.
+    do_hanning : bool, default=False
+        Whether ``match_tiles`` applies a Hanning window.
+    reference_tile : int, default=0
+        Tile used as the common transformation reference.
+
+    Returns
+    -------
+    stitched_img : numpy.ndarray
+        Cropped stitched image in the internal stitching orientation.
+    mif_tile_df : pandas.DataFrame
+        Parsed tile metadata with overlap, cost, and shift columns.
+    transform_dict : dict[str, numpy.ndarray]
+        Tile transformations calculated from the minimum spanning tree.
+    """
+    mif_file = Path(mif_file)
+
+    if not mif_file.is_file():
+        raise FileNotFoundError(f"MIF file does not exist: {mif_file}")
+
+    if mif_file.suffix.lower() != ".ve-mif":
+        raise ValueError(f"Expected a .ve-mif file, got: {mif_file.name}")
+
+    if max_shift_pixels < 0:
+        raise ValueError("max_shift_pixels must be non-negative")
+
+    raw_data_folder = mif_file.parent
+
+    # Resetting the index is important because subsequent stitching
+    # functions treat DataFrame indices as positional tile indices.
+    mif_tile_df = get_tiles_dataframe(
+        mif_file,
+        buffer_microns=buffer_microns,
+    ).reset_index(drop=True)
+
+    if mif_tile_df.empty:
+        raise ValueError(f"No tiles found in {mif_file}")
+
+    if not 0 <= reference_tile < len(mif_tile_df):
+        raise ValueError(
+            f"reference_tile must be between 0 and "
+            f"{len(mif_tile_df) - 1}"
+        )
+
+    mif_tile_df = add_tile_overlap_columns(mif_tile_df)
+    mif_tile_df["raw_data_folder"] = raw_data_folder
+
+    all_costs = []
+    all_shifts = []
+
+    for current_idx in range(len(mif_tile_df)):
+        costs, shifts = match_tiles(
+            mif_tile_df,
+            reference_idx=current_idx,
+            min_overlap_percent=min_overlap_percent,
+            std_th=std_th,
+            do_hanning=do_hanning,
+        )
+
+        for index, shift in enumerate(shifts):
+            if np.linalg.norm(shift) > max_shift_pixels:
+                # Retain a weak edge so the graph has a chance to
+                # remain connected, but do not apply the bad shift.
+                costs[index] = 0.9
+                shifts[index] = np.zeros(2)
+
+        all_costs.append(costs)
+        all_shifts.append(shifts)
+
+    mif_tile_df["stitching_costs"] = all_costs
+    mif_tile_df["stitching_shifts"] = all_shifts
+
+    adjacency_matrix = build_adjacency_matrix_from_costs(
+        mif_tile_df,
+        cost_column="stitching_costs",
+    )
+
+    mst = minimum_spanning_tree(csr_matrix(adjacency_matrix))
+
+    expected_edges = max(0, len(mif_tile_df) - 1)
+    if mst.nnz != expected_edges:
+        raise ValueError(
+            "The tile-overlap graph is disconnected: "
+            f"expected {expected_edges} MST edges, found {mst.nnz}."
+        )
+
+    transform_dict = build_transform_dict_from_mst(
+        mif_tile_df,
+        mst,
+        reference_tile=reference_tile,
+    )
+
+    stitched_img = apply_transforms_and_stitch(
+        mif_tile_df,
+        transform_dict,
+        reference_tile=reference_tile,
+    )
+
+    valid_mask = ~mask_low_and_saturation(stitched_img)
+    valid_rows, valid_columns = np.nonzero(valid_mask)
+
+    if valid_rows.size == 0:
+        raise ValueError("The stitched image contains no valid pixels")
+
+    stitched_img = stitched_img[
+        valid_rows.min() : valid_rows.max() + 1,
+        valid_columns.min() : valid_columns.max() + 1,
+    ]
+
+    return stitched_img, mif_tile_df, transform_dict

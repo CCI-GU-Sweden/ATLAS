@@ -4,11 +4,11 @@ from webknossos import COLOR_CATEGORY, Dataset, webknossos_context
 from webknossos.dataset.sampling_modes import SamplingModes
 from webknossos.geometry.mag import Mag
 
-INPUT_DIR = Path(r"E:\PROJECTS\EM\Filipa\M2-2\ATLAS-projects\proj-4-20260302\NEW LOCATION20260303_data\session_1149164643\Site 1\M2-2_ROI-2.czi")
-OUTPUT_DIR = Path(r"E:\PROJECTS\EM\Rafa\test\out")
+INPUT_DIR = Path(r"E:\PROJECTS\EM\HHD\Atlas Projects\exports\S5\S5-full-stack_aligned.czi")
+OUTPUT_DIR = Path(r"E:\PROJECTS\EM\HHD\Atlas Projects\exports\S5-out")
 ORG_ID = "8f72d77498ee7bdf"
-TOKEN = "rFtwzykCV-7d-CHANGEIT"
-MY_SET_NAME = "my_test_set_5"
+TOKEN = "rFtwzykCV-7d-XWkS5kfxQ"
+MY_SET_NAME = "HHD-S5"
 
 def main(do_upload=False) -> None:
     with webknossos_context(token=TOKEN):
@@ -17,7 +17,7 @@ def main(do_upload=False) -> None:
         dataset = Dataset.from_images(
             input_path=INPUT_DIR,
             output_path=OUTPUT_DIR,
-            voxel_size=(20, 20, 200),
+            voxel_size=(15, 15, 300),
             name=MY_SET_NAME,
             layer_category=COLOR_CATEGORY,
             compress=True,
