@@ -23,6 +23,8 @@ def extract_tif_metadata(tif_path):
         missing, an empty dictionary is returned instead.
     """
 
+    # print(f"in extract_tif_metadata: {tif_path}")
+
     assert isinstance(tif_path, Path), "tif_path must be a pathlib.Path object"
     assert tif_path.is_file(), "tif_path must be an existing file"
     
@@ -60,6 +62,9 @@ def get_pixel_size_from_tif(filename, raw_data_folder):
     float
         The pixel size in microns, or NaN if extraction fails.
     """
+    # print(filename)
+    # print(Path(filename))
+    # print(Path(filename).name)
 
     if "\\" in filename:
         tif_name = PureWindowsPath(filename).name
@@ -68,13 +73,20 @@ def get_pixel_size_from_tif(filename, raw_data_folder):
         tif_name = PurePosixPath(filename).name
         tif_file = raw_data_folder.joinpath(tif_name)
 
+    # print('get pixel size:')
+    # print(tif_name)
+    # print(tif_file)
+    # print('')
+
     try:
         tif_metadata = extract_tif_metadata(tif_file)
         fibics_dict = tif_metadata.get('FibicsDict', {})
         pix_size_micron = float(fibics_dict['Scan']['Ux'])
+        print('')
         return pix_size_micron
     except (KeyError, ValueError, FileNotFoundError) as e:
         print(f"Warning: Could not extract pixel size for {filename}: {e}")
+        print('')
         return float('nan')
 
 
@@ -101,6 +113,8 @@ def get_image_size_from_tif(filename, raw_data_folder):
     else:
         tif_name = PurePosixPath(filename).name
         tif_file = raw_data_folder.joinpath(tif_name)
+        
+    # tif_file = raw_data_folder.joinpath(Path(filename).name)
 
     try:
         # Extract metadata
