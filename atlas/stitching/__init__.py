@@ -1,14 +1,14 @@
 import numpy as np
 import xmltodict
 import pandas as pd
-from pathlib import Path, PureWindowsPath, PurePosixPath
+from pathlib import Path, PureWindowsPath, PurePosixPath, PurePath
 import tifffile as tiff
 
 from collections import namedtuple
 from shapely.geometry import box
 from dateutil import parser
 
-from atlas.io import get_pixel_size_from_tif, get_image_size_from_tif, extract_s_number
+from atlas.io import get_pixel_size_from_tif, get_image_size_from_tif, extract_s_number, filename_helper
 from atlas.image_analysis import mask_low_and_saturation
 from atlas.alignment.utils import first_last_true
 
@@ -1156,8 +1156,16 @@ def stitch_ATLAS_tiles(
     return stitched_img, mif_tile_df, transform_dict
 
 
-def filename_helper(path_to_file):
+def filename_helper(path_to_file: str | PurePath) -> str:
+    if isinstance(path_to_file, PurePath):
+        path_to_file = str(path_to_file)
+    elif not isinstance(path_to_file, str):
+        raise TypeError(
+            "path_to_file must be a string or pathlib path object, "
+            f"not {type(path_to_file).__name__}"
+        )
+
     if "\\" in path_to_file:
         return PureWindowsPath(path_to_file).name
-    else:
-        return PurePosixPath(path_to_file).name
+
+    return PurePosixPath(path_to_file).name

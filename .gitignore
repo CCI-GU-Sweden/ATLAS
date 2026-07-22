@@ -84,8 +84,12 @@ target/
 #VSCode
 .vscode/
 
+#jsons
+*.json
+
 # Jupyter Notebook
 .ipynb_checkpoints
+ATLAS-metadata-io.ipynb
 
 # IPython
 profile_default/
