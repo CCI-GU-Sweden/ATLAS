@@ -4,7 +4,7 @@ Functions for handling Fibics metadata.
 
 import xmltodict
 import tifffile as tiff
-from pathlib import Path, PureWindowsPath, PurePosixPath
+from pathlib import Path, PureWindowsPath, PurePosixPath, PurePath
 import numpy as np
 
 def extract_tif_metadata(tif_path):
@@ -129,8 +129,80 @@ def get_image_size_from_tif(filename, raw_data_folder):
         return np.nan, np.nan  # Return NaN values for missing metadata
     
 
-def filename_helper(path_to_file):
+def find_slice_valid_path(raw_data_folder):
+
+    # find path to the ve-mif file which stores the slice's metadata
+    mif_found = False
+    for file in raw_data_folder.iterdir():  
+        # Check if it's a file with the desired extension
+        if file.is_file() and file.suffix == ".ve-mif":
+            mif_file = file
+            mif_found = True
+            break
+    
+    if not mif_found:
+        return None, ".ve-mif file not found"
+
+    # get number of tif files in the data folder
+    tif_files_list = list(raw_data_folder.glob("*.tif"))
+    for i, tf in enumerate(tif_files_list):
+        tif_files_list[i] = filename_helper(str(tf))
+    
+    num_tif_files = len(tif_files_list)
+
+    # get a dict of the metadata
+    with open(mif_file, "r", encoding="utf-8") as f:
+        mif_dict = xmltodict.parse(f.read())
+
+    # reject a data folder if the status is not completed
+    if mif_dict['MosaicInfo']['Status'].lower() != "completed":
+        return None, "Incomplete acquisition"
+    
+    # check if the tiff files for all the tiles exist in the folder
+    # first check if the numbers match
+    tile_list = mif_dict['MosaicInfo']['Tiles']['Tile']
+    if len(tile_list) != num_tif_files:
+        return None, "unequal number of tif files and metadata tif files"
+    
+    # check whether the filenames in the list exist in the folder
+    for tile in tile_list:
+        filename = filename_helper(tile["Filename"])
+        if filename not in tif_files_list:
+            return None, "tif files and metadata tif files do not agree"
+    
+    # check whether the pixel sizes are equal for all the tiles
+    # no need as there is just a single pixel size in the metadata
+
+    return raw_data_folder, "" # maybe return None instead of empty string
+
+def get_valid_slice_folders(series_folder):
+
+    series_list = []
+    for folder in series_folder.iterdir():  # Iterate over all items in the folder
+        if folder.is_dir() and folder.name.startswith("S_"):
+            series_list.append(folder)
+
+    valid_folders = []
+    failed_folders = []
+    for raw_data_folder in series_list:
+        folder_name, failure_condition = find_slice_valid_path(raw_data_folder)
+        if folder_name is not None:
+            valid_folders.append(folder_name)
+        else:
+            failed_folders.append([folder_name, failure_condition])
+    
+    return valid_folders, failed_folders
+    
+def filename_helper(path_to_file: str | PurePath) -> str:
+    if isinstance(path_to_file, PurePath):
+        path_to_file = str(path_to_file)
+    elif not isinstance(path_to_file, str):
+        raise TypeError(
+            "path_to_file must be a string or pathlib path object, "
+            f"not {type(path_to_file).__name__}"
+        )
+
     if "\\" in path_to_file:
         return PureWindowsPath(path_to_file).name
-    else:
-        return PurePosixPath(path_to_file).name
+
+    return PurePosixPath(path_to_file).name
