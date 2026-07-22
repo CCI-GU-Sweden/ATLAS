@@ -934,6 +934,92 @@ def calculate_cumulative_shifts(input_df):
     
     return input_df
 
+
+def correct_z_alignment_from_points(
+    alignment_df,
+    fixed_points,
+    moving_points,
+    *,
+    copy=True,
+):
+    """
+    Correct pairwise alignment shifts using corresponding landmark points.
+
+    The landmarks must be selected after the initial automatic alignment.
+    Consequently, each measured point difference is a residual correction
+    that is added to the existing automatic ``current_shift``.
+
+    Points must be provided as (z, y, x). Each moving point must belong
+    to the section immediately after its corresponding fixed point.
+    Multiple landmarks for the same section pair are combined using their
+    median residual correction. Final shifts are rounded to whole pixels
+    and stored as floating-point values.
+    """
+    fixed_points = np.asarray(fixed_points, dtype=float)
+    moving_points = np.asarray(moving_points, dtype=float)
+
+    if fixed_points.shape != moving_points.shape:
+        raise ValueError(
+            "fixed_points and moving_points must have the same shape."
+        )
+
+    if fixed_points.ndim != 2 or fixed_points.shape[1] != 3:
+        raise ValueError(
+            "Points must have shape (n, 3), ordered as (z, y, x)."
+        )
+
+    if not np.isfinite(fixed_points).all() or not np.isfinite(
+        moving_points
+    ).all():
+        raise ValueError("Points must contain only finite numeric values.")
+
+    fixed_z = fixed_points[:, 0]
+    moving_z = moving_points[:, 0]
+
+    if not np.all(fixed_z == moving_z - 1):
+        raise ValueError(
+            "Each fixed point must be from the section immediately before "
+            "its moving point."
+        )
+
+    if not np.all(fixed_z == fixed_z.astype(int)) or not np.all(
+        moving_z == moving_z.astype(int)
+    ):
+        raise ValueError("The z coordinates must be integer section indices.")
+
+    result = alignment_df.copy(deep=True) if copy else alignment_df
+    corrections = {}
+
+    for fixed_point, moving_point in zip(fixed_points, moving_points):
+        moving_index = int(moving_point[0])
+        correction_yx = fixed_point[1:] - moving_point[1:]
+        corrections.setdefault(moving_index, []).append(correction_yx)
+
+    for moving_index, section_corrections in corrections.items():
+        if moving_index not in result.index:
+            raise KeyError(
+                f"Moving section index {moving_index} is not in the DataFrame."
+            )
+
+        correction_yx = np.median(
+            np.vstack(section_corrections), axis=0
+        )
+        current_shift = np.asarray(
+            result.at[moving_index, "current_shift"], dtype=float
+        )
+
+        if current_shift.shape != (2,):
+            raise ValueError(
+                f"Invalid current_shift at index {moving_index}: "
+                f"expected shape (2,), got {current_shift.shape}."
+            )
+
+        result.at[moving_index, "current_shift"] = np.round(
+            current_shift + correction_yx
+        ).astype(float)
+
+    return calculate_cumulative_shifts(result)
+
 def compute_canvas_from_df(z_align_df, transform_column="cumulative_transform"):
     """
     Compute a common canvas bounding box that can hold all transformed images

@@ -16,3 +16,17 @@ def test_import_stitch_atlas_tiles():
     from atlas.stitching import stitch_ATLAS_tiles
 
     assert callable(stitch_ATLAS_tiles)
+
+
+def test_import_correct_z_alignment_from_points():
+    from atlas.alignment import correct_z_alignment_from_points
+
+    assert callable(correct_z_alignment_from_points)
+
+
+# TODO: Add unit tests for correct_z_alignment_from_points:
+# - residual correction and whole-pixel rounding
+# - median correction from multiple landmarks
+# - copy versus in-place behavior
+# - invalid point shapes and nonconsecutive z-indices
+# - cumulative-shift recalculation
