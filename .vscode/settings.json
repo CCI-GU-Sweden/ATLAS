@@ -1,5 +1,0 @@
-{
-    "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda",
-    "python.defaultInterpreterPath": "/home/xgupke/miniforge3/envs/atlas-env/bin/python"
-}
