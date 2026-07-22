@@ -62,12 +62,16 @@ def get_pixel_size_from_tif(filename, raw_data_folder):
     float
         The pixel size in microns, or NaN if extraction fails.
     """
-    if "\\" in filename:
-        tif_name = PureWindowsPath(filename).name
-        tif_file = raw_data_folder.joinpath(tif_name)
-    else:
-        tif_name = PurePosixPath(filename).name
-        tif_file = raw_data_folder.joinpath(tif_name)
+
+    tif_name = filename_helper(filename)
+    tif_file = raw_data_folder.joinpath(tif_name)
+
+    # if "\\" in filename:
+    #     tif_name = PureWindowsPath(filename).name
+    #     tif_file = raw_data_folder.joinpath(tif_name)
+    # else:
+    #     tif_name = PurePosixPath(filename).name
+    #     tif_file = raw_data_folder.joinpath(tif_name)
 
     try:
         tif_metadata = extract_tif_metadata(tif_file)
@@ -98,12 +102,16 @@ def get_image_size_from_tif(filename, raw_data_folder):
         The image width and height extracted from the TIFF metadata.
         Returns (NaN, NaN) if extraction fails.
     """
-    if "\\" in filename:
-        tif_name = PureWindowsPath(filename).name
-        tif_file = raw_data_folder.joinpath(tif_name)
-    else:
-        tif_name = PurePosixPath(filename).name
-        tif_file = raw_data_folder.joinpath(tif_name)
+
+    tif_name = filename_helper(filename)
+    tif_file = raw_data_folder.joinpath(tif_name)
+    
+    # if "\\" in filename:
+    #     tif_name = PureWindowsPath(filename).name
+    #     tif_file = raw_data_folder.joinpath(tif_name)
+    # else:
+    #     tif_name = PurePosixPath(filename).name
+    #     tif_file = raw_data_folder.joinpath(tif_name)
 
     try:
         # Extract metadata
@@ -119,3 +127,10 @@ def get_image_size_from_tif(filename, raw_data_folder):
     except (KeyError, ValueError, FileNotFoundError) as e:
         print(f"Warning: Could not extract image size for {filename}: {e}")
         return np.nan, np.nan  # Return NaN values for missing metadata
+    
+
+def filename_helper(path_to_file):
+    if "\\" in path_to_file:
+        return PureWindowsPath(path_to_file).name
+    else:
+        return PurePosixPath(path_to_file).name

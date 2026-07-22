@@ -1,7 +1,7 @@
 import numpy as np
 import xmltodict
 import pandas as pd
-from pathlib import Path
+from pathlib import Path, PureWindowsPath, PurePosixPath
 import tifffile as tiff
 
 from collections import namedtuple
@@ -617,9 +617,14 @@ def match_tiles(input_df, reference_idx, min_overlap_percent=2, std_th=2, do_han
     h_ref = row_ref['ImageHeight']
 
     # Load dtype from TIFF
-    ref_tif_path = row_ref.raw_data_folder.joinpath(Path(row_ref.Filename).name)
-    with tiff.TiffFile(ref_tif_path) as tif:
-        image_dtype = tif.pages[0].dtype
+    ref_tif_name = filename_helper(row_ref.Filename)
+    ref_tif_path = row_ref.raw_data_folder.joinpath(ref_tif_name)
+    # if "\\" in row_ref.Filename:
+    #     ref_tif_path = row_ref.raw_data_folder.joinpath(PureWindowsPath(row_ref.Filename).name)
+    # else:
+    #     ref_tif_path = row_ref.raw_data_folder.joinpath(PurePosixPath(row_ref.Filename).name)
+    # with tiff.TiffFile(ref_tif_path) as tif:
+    #     image_dtype = tif.pages[0].dtype
 
     print(f"\nProcessing reference tile {reference_idx}...")
 
@@ -650,7 +655,12 @@ def match_tiles(input_df, reference_idx, min_overlap_percent=2, std_th=2, do_han
         # Compute overlapping bounding boxes
         # ------------------------------------------------------------------
         geometry_mov = row_mov['geometry']
-        mov_tif_path = row_ref.raw_data_folder.joinpath(Path(row_mov.Filename).name)
+        mov_tif_name = filename_helper(row_mov.Filename)
+        mov_tif_path = row_ref.raw_data_folder.joinpath(mov_tif_name)
+        # if "\\" in row_mov.Filename:
+        #     mov_tif_path = row_ref.raw_data_folder.joinpath(PureWindowsPath(row_mov.Filename).name)
+        # else:
+        #     mov_tif_path = row_ref.raw_data_folder.joinpath(PurePosixPath(row_mov.Filename).name)
 
         ref_box, mov_box = get_overlap_relative(
             box_reference=geometry_ref,
@@ -970,7 +980,13 @@ def apply_transforms_and_stitch(mif_tile_df, transform_dict, reference_tile=0):
         t_val = transform_dict[t_key]
 
         # Load current tile image and flip vertically
-        tif_current = row.raw_data_folder.joinpath(Path(row.Filename).name)
+        tif_current_name = filename_helper(row.Filename)
+        tif_current = row.raw_data_folder.joinpath(tif_current_name)
+        # if "\\" in row.Filename:
+        #     tif_current = row.raw_data_folder.joinpath(PureWindowsPath(row.Filename).name)
+        # else:
+        #     tif_current = row.raw_data_folder.joinpath(PurePosixPath(row.Filename).name)
+
         img_current = np.flipud(tiff.imread(tif_current))  # Flip image
 
         # Initialize stitched canvas on first iteration
@@ -1138,3 +1154,10 @@ def stitch_ATLAS_tiles(
     ]
 
     return stitched_img, mif_tile_df, transform_dict
+
+
+def filename_helper(path_to_file):
+    if "\\" in path_to_file:
+        return PureWindowsPath(path_to_file).name
+    else:
+        return PurePosixPath(path_to_file).name
