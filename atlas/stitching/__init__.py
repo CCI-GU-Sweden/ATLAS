@@ -608,6 +608,19 @@ def match_tiles(input_df, reference_idx, min_overlap_percent=2, std_th=2, do_han
     assert 0 <= reference_idx < len(input_df), "reference_idx is out of DataFrame bounds"
     assert isinstance(min_overlap_percent, (int, float)), "min_overlap_percent must be numeric"
 
+    def load_tiff_array(tif_path):
+        """Memory-map a TIFF when possible, otherwise read it normally."""
+        try:
+            return tiff.memmap(tif_path, page=0, mode="r")
+        except ValueError:
+            with tiff.TiffFile(tif_path) as tif_file:
+                return tif_file.asarray()
+
+    def close_tiff_array(image):
+        """Close the file mapping owned by a NumPy memmap array."""
+        if isinstance(image, np.memmap):
+            image._mmap.close()
+
     # ------------------------------------------------------------------
     # Setup reference tile
     # ------------------------------------------------------------------
@@ -619,6 +632,7 @@ def match_tiles(input_df, reference_idx, min_overlap_percent=2, std_th=2, do_han
     # Load dtype from TIFF
     ref_tif_name = filename_helper(row_ref.Filename)
     ref_tif_path = row_ref.raw_data_folder.joinpath(ref_tif_name)
+    ref_image = None
     # if "\\" in row_ref.Filename:
     #     ref_tif_path = row_ref.raw_data_folder.joinpath(PureWindowsPath(row_ref.Filename).name)
     # else:
@@ -670,20 +684,24 @@ def match_tiles(input_df, reference_idx, min_overlap_percent=2, std_th=2, do_han
         # ------------------------------------------------------------------
         # Load overlapping region from reference image
         # ------------------------------------------------------------------
-        with tiff.TiffFile(ref_tif_path) as tif:
-            y0_tmp, y1_tmp = int(ref_box.bounds[1]), int(ref_box.bounds[3])
-            y0, y1 = h_ref - y1_tmp, h_ref - y0_tmp  # flip correction
-            x0, x1 = int(ref_box.bounds[0]), int(ref_box.bounds[2])
-            crop_ref = np.flipud(tif.asarray()[y0:y1, x0:x1])
+        y0_tmp, y1_tmp = int(ref_box.bounds[1]), int(ref_box.bounds[3])
+        y0, y1 = h_ref - y1_tmp, h_ref - y0_tmp  # flip correction
+        x0, x1 = int(ref_box.bounds[0]), int(ref_box.bounds[2])
+        if ref_image is None:
+            ref_image = load_tiff_array(ref_tif_path)
+        crop_ref = np.flipud(ref_image[y0:y1, x0:x1]).copy()
 
         # ------------------------------------------------------------------
         # Load overlapping region from moving image
         # ------------------------------------------------------------------
-        with tiff.TiffFile(mov_tif_path) as tif:
+        mov_image = load_tiff_array(mov_tif_path)
+        try:
             y0_tmp, y1_tmp = int(mov_box.bounds[1]), int(mov_box.bounds[3])
             y0, y1 = h_ref - y1_tmp, h_ref - y0_tmp
             x0, x1 = int(mov_box.bounds[0]), int(mov_box.bounds[2])
-            crop_mov = np.flipud(tif.asarray()[y0:y1, x0:x1])
+            crop_mov = np.flipud(mov_image[y0:y1, x0:x1]).copy()
+        finally:
+            close_tiff_array(mov_image)
 
         # ------------------------------------------------------------------
         # Mask & threshold computation
@@ -748,6 +766,7 @@ def match_tiles(input_df, reference_idx, min_overlap_percent=2, std_th=2, do_han
         cost_list.append(cost)
         shift_list.append(detected_shift)
 
+    close_tiff_array(ref_image)
     return cost_list, shift_list
 
 def build_adjacency_matrix_from_costs(df, cost_column='stitching_costs'):
