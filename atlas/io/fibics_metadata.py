@@ -23,8 +23,6 @@ def extract_tif_metadata(tif_path):
         missing, an empty dictionary is returned instead.
     """
 
-    # print(f"in extract_tif_metadata: {tif_path}")
-
     assert isinstance(tif_path, Path), "tif_path must be a pathlib.Path object"
     assert tif_path.is_file(), "tif_path must be an existing file"
     
@@ -46,6 +44,36 @@ def extract_tif_metadata(tif_path):
     
     return metadata_dict
 
+def filename_helper(path_to_file: str | PurePath) -> PurePath:
+
+    """
+    Gets a filepath which is valid for Windows and Linux
+
+    Parameters:
+    ----------
+    filename : str
+        The TIFF filename from the DataFrame.
+    raw_data_folder : Path
+        The directory where the TIFF files are stored.
+
+    Returns:
+    -------
+    path_to_file converted to PurePosixPath | PureWindowsPath
+        The file path in either format.
+    """
+    if isinstance(path_to_file, PurePath):
+        path_to_file = str(path_to_file)
+    elif not isinstance(path_to_file, str):
+        raise TypeError(
+            "path_to_file must be a string or pathlib path object, "
+            f"not {type(path_to_file).__name__}"
+        )
+
+    if "\\" in path_to_file:
+        return PureWindowsPath(path_to_file).name
+
+    return PurePosixPath(path_to_file).name
+
 def get_pixel_size_from_tif(filename, raw_data_folder):
     """
     Extracts the pixel size (in microns) from the TIFF metadata.
@@ -65,13 +93,6 @@ def get_pixel_size_from_tif(filename, raw_data_folder):
 
     tif_name = filename_helper(filename)
     tif_file = raw_data_folder.joinpath(tif_name)
-
-    # if "\\" in filename:
-    #     tif_name = PureWindowsPath(filename).name
-    #     tif_file = raw_data_folder.joinpath(tif_name)
-    # else:
-    #     tif_name = PurePosixPath(filename).name
-    #     tif_file = raw_data_folder.joinpath(tif_name)
 
     try:
         tif_metadata = extract_tif_metadata(tif_file)
@@ -105,13 +126,6 @@ def get_image_size_from_tif(filename, raw_data_folder):
 
     tif_name = filename_helper(filename)
     tif_file = raw_data_folder.joinpath(tif_name)
-    
-    # if "\\" in filename:
-    #     tif_name = PureWindowsPath(filename).name
-    #     tif_file = raw_data_folder.joinpath(tif_name)
-    # else:
-    #     tif_name = PurePosixPath(filename).name
-    #     tif_file = raw_data_folder.joinpath(tif_name)
 
     try:
         # Extract metadata
@@ -129,7 +143,23 @@ def get_image_size_from_tif(filename, raw_data_folder):
         return np.nan, np.nan  # Return NaN values for missing metadata
     
 
-def find_slice_valid_path(raw_data_folder):
+def find_slice_valid_path(raw_data_folder: PurePath):
+
+    """
+    Finds whether or not a slice folder is valid through a series of metadata checks
+
+    Parameters:
+    ----------
+    raw_data_folder : Path()
+                    The path to a single slice folder.
+
+    Returns:
+    -------
+    valid_folder : Path()
+                    this is raw_data_folder if all checks are passed, else None
+    failure_condition : str
+                    a string describing the check that failed, if success then an empty string
+    """
 
     # find path to the ve-mif file which stores the slice's metadata
     mif_found = False
@@ -175,7 +205,25 @@ def find_slice_valid_path(raw_data_folder):
 
     return raw_data_folder, "" # maybe return None instead of empty string
 
-def get_valid_slice_folders(series_folder):
+def get_valid_slice_folders(series_folder: Path) -> tuple[list[Path], list[list[Path | str]]]:
+
+
+    """
+    Runs find_slice_valid path() for all the slice folders to check the validity through metadata
+
+    Parameters:
+    ----------
+    series_folder : Path()
+                    The path to the dataset's root i.e. the dir which contains folders for all the slices.
+
+    Returns:
+    -------
+    valid_folders : list[str]
+                    a list of slice folders which pass the metadata checks
+    failed_folders : list[list[Path | str]]
+                    a list of lists where each entries first value is the failed path and the second value
+                    is the string for why it failed
+    """
 
     series_list = []
     for folder in series_folder.iterdir():  # Iterate over all items in the folder
@@ -192,17 +240,128 @@ def get_valid_slice_folders(series_folder):
             failed_folders.append([folder_name, failure_condition])
     
     return valid_folders, failed_folders
+
+def get_imaging_duration(mif_dict: dict):
+
+    """
+    Gets imaging time from the start and end of acquisition in the mif metadata (which is already in a dict)
+    """
+
+    from datetime import datetime
+
+    start = datetime.fromisoformat(mif_dict['MosaicInfo']['Date'])
+    end = datetime.fromisoformat(mif_dict['MosaicInfo']['DateFinished'])
+
+    duration = end - start
+
+    total_seconds = int(duration.total_seconds())
+
+    days, remainder = divmod(total_seconds, 86_400)
+    hours, remainder = divmod(remainder, 3_600)
+    minutes, seconds = divmod(remainder, 60)
+
+    formatted_duration = f"D{days}T{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    return formatted_duration
     
-def filename_helper(path_to_file: str | PurePath) -> str:
-    if isinstance(path_to_file, PurePath):
-        path_to_file = str(path_to_file)
-    elif not isinstance(path_to_file, str):
-        raise TypeError(
-            "path_to_file must be a string or pathlib path object, "
-            f"not {type(path_to_file).__name__}"
-        )
+def get_metadata_for_stitched_tif(mif_file: PurePath):
 
-    if "\\" in path_to_file:
-        return PureWindowsPath(path_to_file).name
+    """
+    Gets acquisition metadata for the stitched tif for a single slice
 
-    return PurePosixPath(path_to_file).name
+    Parameters:
+    ----------
+    mif_file : PurePath
+                The path to an existinf .ve-mif file.
+
+    Returns:
+    -------
+    metadict : dict
+                A dictionary with acquisition metadata to be included with the stitched tif
+    """
+
+    import re
+
+    with open(mif_file, "r", encoding="utf-8") as f:
+        mif_dict = xmltodict.parse(f.read())
+
+    import re
+    metadict = {}
+
+    metadict['Acquisition date'], _ = mif_dict['MosaicInfo']['Date'].split('T')
+    metadict['Protocol name'] = mif_dict['MosaicInfo']['SetupInfo']['SetupFilename']
+
+    numtiles_x = mif_dict['MosaicInfo']['TileInfo']['NumTilesX']
+    numtiles_y = mif_dict['MosaicInfo']['TileInfo']['NumTilesY']
+    metadict['Tile arrangement'] = f"R{numtiles_y}C{numtiles_x}"
+
+    metadict['Imaging duration'] = get_imaging_duration(mif_dict)
+
+    metadict["Pixel size"] = float(mif_dict['MosaicInfo']['PixelSize']['#text'])
+    metadict['Pixel size unit'] = mif_dict['MosaicInfo']['PixelSize']['@unit']
+
+    dwell_unit = mif_dict['MosaicInfo']['DwellTime']['@unit']
+    if dwell_unit.lower() == 'ns':
+        dwellscale = 0.001
+    elif dwell_unit.lower() == "µs":
+        dwellscale = 1
+    elif dwell_unit.lower() == "ms":
+        dwellscale = 1000
+    metadict["Dwell time"] = dwellscale * float(mif_dict['MosaicInfo']['DwellTime']['#text'])
+    metadict['Dwell time unit'] = "µs"
+
+    metadict['Line average'] = int(mif_dict['MosaicInfo']['LineAveraging'])
+
+    wd = 0
+    for tile in mif_dict['MosaicInfo']['Tiles']['Tile']:
+        wd += float(tile['WD'])
+    wd /= len(mif_dict['MosaicInfo']['Tiles']['Tile'])
+    metadict['Working distance'] = wd * 1000 # WD is unitless, we assume it is stored in meters
+    metadict['Working distance unit'] = 'mm'
+
+    text = mif_dict['MosaicInfo']['SetupInfo']['Beam']['Aperture']
+    units = re.findall(r"(?<=\d)\s*([a-zA-Z]+)", text)
+    metadict['EHT voltage'] = float(mif_dict['MosaicInfo']['SetupInfo']['Beam']['AccV']) / 1000
+    metadict['EHT voltage unit'] = units[0]
+    metadict['EHT current'] = float(mif_dict['MosaicInfo']['SetupInfo']['Beam']['BeamI'])
+    metadict['EHT current unit'] = units[1]
+
+    metadict['Detector'] = mif_dict['MosaicInfo']['SetupInfo']['Signal']['Detector']
+
+    bsd_gain = None
+    for detector_item in mif_dict['MosaicInfo']['SetupInfo']['Signal']['DetectorInfo']['item']:
+        if detector_item['@name'].lower() == "bsd gain":
+            bsd_gain = detector_item['#text']
+            break
+
+    metadict['BSD Gain'] = bsd_gain
+
+    brightness = 0
+    for tile in mif_dict['MosaicInfo']['Tiles']['Tile']:
+        brightness += float(tile['Brightness'])
+    brightness /= len(mif_dict['MosaicInfo']['Tiles']['Tile'])
+    metadict['Brightness'] = brightness
+
+    contrast = 0
+    for tile in mif_dict['MosaicInfo']['Tiles']['Tile']:
+        contrast += float(tile['Contrast'])
+    contrast /= len(mif_dict['MosaicInfo']['Tiles']['Tile'])
+    metadict['contrast'] = contrast
+
+    autofocusfreq = float(mif_dict['MosaicInfo']['TileInfo']['AutoTune']['AutoFocusFrequency'])
+    autofocusbool = True
+    if not autofocusfreq > 0:
+        autofocusbool = False
+        autofocusfreq = 0
+    metadict['Autofocus'] = autofocusbool
+    metadict['Autofocus frequency'] = autofocusfreq
+
+    autostigfreq = float(mif_dict['MosaicInfo']['TileInfo']['AutoTune']['AutoStigFrequency'])
+    autostigbool = True
+    if not autostigfreq > 0:
+        autostigbool = False
+        autostigfreq = 0
+    metadict['Autostig'] = autostigbool
+    metadict['Autostig frequency'] = autostigfreq
+
+    return metadict
