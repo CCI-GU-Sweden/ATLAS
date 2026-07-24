@@ -15,15 +15,12 @@ to:
 The stitching code uses tile positions, scan rotation, acquisition order, image
 size, and pixel size from the ATLAS/FIBICS metadata. ATLAS records when tile
 acquisition is finished, so dynamic/incremental processing should be possible in
-principle, but this package does not yet provide a controlled or well-tested
-dynamic workflow.
+principle.
 
 ## Status
 
 This is early packaging work. The rough stitching and z-alignment utilities are
 being moved from notebooks/scripts into an installable package.
-
-Fine z-alignment is not implemented yet, but it is planned.
 
 ## Install
 
