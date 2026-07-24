@@ -8,7 +8,7 @@ from collections import namedtuple
 from shapely.geometry import box
 from dateutil import parser
 
-from atlas.io import get_pixel_size_from_tif, get_image_size_from_tif, extract_s_number, filename_helper
+from atlas.io import get_pixel_size_from_tif, get_image_size_from_tif, extract_s_number, filename_helper, get_metadata_for_stitched_tif
 from atlas.image_analysis import mask_low_and_saturation
 from atlas.alignment.utils import first_last_true
 
@@ -619,12 +619,6 @@ def match_tiles(input_df, reference_idx, min_overlap_percent=2, std_th=2, do_han
     # Load dtype from TIFF
     ref_tif_name = filename_helper(row_ref.Filename)
     ref_tif_path = row_ref.raw_data_folder.joinpath(ref_tif_name)
-    # if "\\" in row_ref.Filename:
-    #     ref_tif_path = row_ref.raw_data_folder.joinpath(PureWindowsPath(row_ref.Filename).name)
-    # else:
-    #     ref_tif_path = row_ref.raw_data_folder.joinpath(PurePosixPath(row_ref.Filename).name)
-    # with tiff.TiffFile(ref_tif_path) as tif:
-    #     image_dtype = tif.pages[0].dtype
 
     print(f"\nProcessing reference tile {reference_idx}...")
 
@@ -657,10 +651,6 @@ def match_tiles(input_df, reference_idx, min_overlap_percent=2, std_th=2, do_han
         geometry_mov = row_mov['geometry']
         mov_tif_name = filename_helper(row_mov.Filename)
         mov_tif_path = row_ref.raw_data_folder.joinpath(mov_tif_name)
-        # if "\\" in row_mov.Filename:
-        #     mov_tif_path = row_ref.raw_data_folder.joinpath(PureWindowsPath(row_mov.Filename).name)
-        # else:
-        #     mov_tif_path = row_ref.raw_data_folder.joinpath(PurePosixPath(row_mov.Filename).name)
 
         ref_box, mov_box = get_overlap_relative(
             box_reference=geometry_ref,
@@ -982,10 +972,6 @@ def apply_transforms_and_stitch(mif_tile_df, transform_dict, reference_tile=0):
         # Load current tile image and flip vertically
         tif_current_name = filename_helper(row.Filename)
         tif_current = row.raw_data_folder.joinpath(tif_current_name)
-        # if "\\" in row.Filename:
-        #     tif_current = row.raw_data_folder.joinpath(PureWindowsPath(row.Filename).name)
-        # else:
-        #     tif_current = row.raw_data_folder.joinpath(PurePosixPath(row.Filename).name)
 
         img_current = np.flipud(tiff.imread(tif_current))  # Flip image
 
@@ -1156,16 +1142,56 @@ def stitch_ATLAS_tiles(
     return stitched_img, mif_tile_df, transform_dict
 
 
-def filename_helper(path_to_file: str | PurePath) -> str:
-    if isinstance(path_to_file, PurePath):
-        path_to_file = str(path_to_file)
-    elif not isinstance(path_to_file, str):
-        raise TypeError(
-            "path_to_file must be a string or pathlib path object, "
-            f"not {type(path_to_file).__name__}"
-        )
+def save_stitched_image(output_tif_path: PurePath, stitched_img: np.ndarray, mif_metadict: dict) -> None:
 
-    if "\\" in path_to_file:
-        return PureWindowsPath(path_to_file).name
+    """
+    Saves the stitched image to a specified path
 
-    return PurePosixPath(path_to_file).name
+    Parameters:
+    ----------
+    output_tif_path : Path()
+                    The path to save the tif.
+    stitched_img : np.ndarray
+                    The array storing the stitched image.
+    mif_metadict : dict
+                    Acquisition metadata from the mif file.
+    
+    Returns:
+    -------
+    None
+    """
+    import tifffile as tiff
+    tiff.imwrite(output_tif_path, 
+                np.flipud(stitched_img), 
+                metadata={"axes": "YX", "AcquisitionMetadata": mif_metadict})
+
+    return
+
+def load_stitched_image(stitched_tif_path: PurePath) -> tuple[np.ndarray, dict]:
+
+    """
+        Loads a single stitched image from a specified path
+    
+        Parameters:
+        ----------
+        stitched_tif_path : Path()
+                        The path to the desired tiff to load.
+        
+        Returns:
+        -------
+        stitched_img : np.ndarray
+                        The array storing the stitched image.
+        acq_metadata : dict
+                        The acquisition metadata stored in the tiff.
+        """
+    
+    import tifffile as tiff
+
+    if not stitched_tif_path.exists():
+        raise FileNotFoundError(f"TIFF file does not exist: {stitched_tif_path}")
+
+    with tiff.TiffFile(stitched_tif_path) as tif:
+        stitched_img = tif.asarray()
+        acq_metadata = tif.shaped_metadata[0]["AcquisitionMetadata"]
+
+    return stitched_img, acq_metadata
