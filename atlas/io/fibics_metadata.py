@@ -23,7 +23,7 @@ def extract_tif_metadata(tif_path):
         missing, an empty dictionary is returned instead.
     """
 
-    assert isinstance(tif_path, Path), "tif_path must be a pathlib.Path object"
+    assert isinstance(tif_path, PurePath), "tif_path must be a pathlib.Path object"
     assert tif_path.is_file(), "tif_path must be an existing file"
     
     with tiff.TiffFile(tif_path) as tif:
