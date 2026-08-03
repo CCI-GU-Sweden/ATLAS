@@ -301,28 +301,49 @@ def is_there_a_single_tif(folder_path):
         print("Folder has no .tif files.")
         return False, None  # No .tif files found
     
+# def extract_s_number(filepath):
+#     """
+#     Extracts the S number from a filename using a specific pattern (_S_\d+_).
+    
+#     Parameters:
+#     ----------
+#     filepath : Path
+#         The file path from which to extract the S number.
+    
+#     Returns:
+#     -------
+#     int or None
+#         - The extracted S number if found.
+#         - None if the pattern does not exist in the filename.
+#     """
+#     assert isinstance(filepath, PurePath), "filepath must be a pathlib.Path object"
+#     assert filepath.is_file(), "filepath must be an existing file"
+    
+#     pattern = re.compile(r"_S_(\d+)")
+#     match = pattern.search(filepath.name)  # Only search in the filename
+    
+#     return int(match.group(1)) if match else None  # Return None if no match found
+
 def extract_s_number(filepath):
     """
-    Extracts the S number from a filename using a specific pattern (_S_\d+_).
-    
-    Parameters:
+    Extract the S number from a file or directory name.
+
+    Parameters
     ----------
-    filepath : Path
-        The file path from which to extract the S number.
-    
-    Returns:
+    filepath : str or Path
+        Path or name containing an S number.
+
+    Returns
     -------
     int or None
-        - The extracted S number if found.
-        - None if the pattern does not exist in the filename.
+        The extracted S number, or None if no match is found.
     """
-    assert isinstance(filepath, PurePath), "filepath must be a pathlib.Path object"
-    assert filepath.is_file(), "filepath must be an existing file"
-    
-    pattern = re.compile(r"_S_(\d+)")
-    match = pattern.search(filepath.name)  # Only search in the filename
-    
-    return int(match.group(1)) if match else None  # Return None if no match found
+    _filepath = Path(filepath)
+
+    pattern = re.compile(r"(?:^|_)S_(\d+)")
+    match = pattern.search(_filepath.name)
+
+    return int(match.group(1)) if match else None
 
 def reorder_files_by_s_number(file_list, new_order):
     """
