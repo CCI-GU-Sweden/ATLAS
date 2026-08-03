@@ -129,11 +129,25 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
     if z0_path.exists():
         rm_tree(z0_path)
 
-    store = zarr.DirectoryStore(z0_path)
+    # Zarr v2 code (commented out)
+    # store = zarr.DirectoryStore(z0_path)
+    # chunk_size = 1024
+    # #print(f'Chunk size: {chunk_size},{chunk_size},1')
+    # # I will keep the z, y, x arrangement
+    # z = zarr.creation.open_array(store=store, mode='a', shape=(y_shape, x_shape, n_z), chunks=(chunk_size,chunk_size,1), dtype=original_image_dtype)
+
+    # Zarr v3 code
+    store = zarr.storage.LocalStore(z0_path)
     chunk_size = 1024
-    #print(f'Chunk size: {chunk_size},{chunk_size},1')
-    # I will keep the z, y, x arrangement
-    z = zarr.creation.open_array(store=store, mode='a', shape=(y_shape, x_shape, n_z), chunks=(chunk_size,chunk_size,1), dtype=original_image_dtype)
+    # mode="a" allows appending to the array if it already exists, or creating it if it doesn't. If overwriting is desired, you can use mode "w" instead.
+    z = zarr.open_array(
+        store=store,
+        mode="a",
+        shape=(y_shape, x_shape, n_z),
+        chunks=(chunk_size, chunk_size, 1),
+        dtype=original_image_dtype,
+        zarr_format=2,
+    )
 
     for idx in range(z.shape[2]):
         current_tif_path = alignment_df['moving_path'][idx]

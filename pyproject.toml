@@ -18,16 +18,15 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.11,<3.13"
 
 dependencies = [
     "numpy>=2.1.0",
-    "zarr>=2.0.0",
+    "zarr>=3.0.0",
     "pandas>=2.1.0",
     "xmltodict>=1.0.0",
     "matplotlib>=3.0.0",
@@ -64,7 +63,7 @@ fallback_version = "0.0.0"
 
 [tool.black]
 line-length = 79
-target-version = ['py310', 'py311', 'py312']
+target-version = ['py311', 'py312']
 
 [tool.ruff]
 line-length = 79
