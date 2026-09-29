@@ -91,6 +91,7 @@ target/
 .ipynb_checkpoints
 ATLAS-metadata-io.ipynb
 ATLAS-metadata-stitch.ipynb
+debug*
 
 # IPython
 profile_default/

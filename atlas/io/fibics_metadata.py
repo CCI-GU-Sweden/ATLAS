@@ -143,7 +143,7 @@ def get_image_size_from_tif(filename, raw_data_folder):
         return np.nan, np.nan  # Return NaN values for missing metadata
     
 
-def find_slice_valid_path(raw_data_folder: PurePath):
+def find_slice_valid_path(raw_data_folder):
 
     """
     Finds whether or not a slice folder is valid through a series of metadata checks
@@ -190,15 +190,25 @@ def find_slice_valid_path(raw_data_folder: PurePath):
     
     # check if the tiff files for all the tiles exist in the folder
     # first check if the numbers match
-    tile_list = mif_dict['MosaicInfo']['Tiles']['Tile']
-    if len(tile_list) != num_tif_files:
-        return None, "unequal number of tif files and metadata tif files"
+    nrows = float(mif_dict['MosaicInfo']['TileInfo']['NumTilesY'])
+    ncols = float(mif_dict['MosaicInfo']['TileInfo']['NumTilesX'])
+    ntiles = nrows * ncols
+    if ntiles != num_tif_files:
+        return None, "unequal number of actual tif files and tif files listed in .ve-mif metadata"
     
     # check whether the filenames in the list exist in the folder
-    for tile in tile_list:
-        filename = filename_helper(tile["Filename"])
+    tile_list = mif_dict['MosaicInfo']['Tiles']['Tile']
+    # expect a dict if single tile, else a list of dicts
+    if isinstance(tile_list, dict):
+        filename = filename_helper(tile_list["Filename"])
         if filename not in tif_files_list:
-            return None, "tif files and metadata tif files do not agree"
+            return None, "tif filenames and metadata tif files do not agree"
+        
+    elif isinstance(tile_list, list):
+        for tile in tile_list:
+            filename = filename_helper(tile["Filename"])
+            if filename not in tif_files_list:
+                return None, "tif filenames and metadata tif files do not agree"
     
     # check whether the pixel sizes are equal for all the tiles
     # no need as there is just a single pixel size in the metadata
@@ -312,10 +322,34 @@ def get_metadata_for_stitched_tif(mif_file: PurePath):
 
     metadict['Line average'] = int(mif_dict['MosaicInfo']['LineAveraging'])
 
-    wd = 0
-    for tile in mif_dict['MosaicInfo']['Tiles']['Tile']:
-        wd += float(tile['WD'])
-    wd /= len(mif_dict['MosaicInfo']['Tiles']['Tile'])
+    nrows = float(mif_dict['MosaicInfo']['TileInfo']['NumTilesY'])
+    ncols = float(mif_dict['MosaicInfo']['TileInfo']['NumTilesX'])
+    ntiles = nrows * ncols
+    
+    if ntiles != 1:
+        wd = 0
+        brightness = 0
+        contrast = 0
+        for tile in mif_dict['MosaicInfo']['Tiles']['Tile']:
+            wd += float(tile['WD'])
+            brightness += float(tile['Brightness'])
+            contrast += float(tile['Contrast'])
+        wd /= ntiles
+        contrast /= ntiles
+        brightness /= ntiles
+
+    else:
+        wd = float(mif_dict['MosaicInfo']['Tiles']['Tile']['WD'])
+        brightness = float(mif_dict['MosaicInfo']['Tiles']['Tile']['Brightness'])
+        contrast = float(mif_dict['MosaicInfo']['Tiles']['Tile']['Contrast'])
+
+    metadict['Working distance'] = wd * 1000 # WD is unitless, we assume it is stored in meters
+    metadict['Working distance unit'] = 'mm'
+
+    metadict['Brightness'] = brightness
+
+    metadict['Contrast'] = contrast
+
     metadict['Working distance'] = wd * 1000 # WD is unitless, we assume it is stored in meters
     metadict['Working distance unit'] = 'mm'
 
@@ -335,18 +369,6 @@ def get_metadata_for_stitched_tif(mif_file: PurePath):
             break
 
     metadict['BSD Gain'] = bsd_gain
-
-    brightness = 0
-    for tile in mif_dict['MosaicInfo']['Tiles']['Tile']:
-        brightness += float(tile['Brightness'])
-    brightness /= len(mif_dict['MosaicInfo']['Tiles']['Tile'])
-    metadict['Brightness'] = brightness
-
-    contrast = 0
-    for tile in mif_dict['MosaicInfo']['Tiles']['Tile']:
-        contrast += float(tile['Contrast'])
-    contrast /= len(mif_dict['MosaicInfo']['Tiles']['Tile'])
-    metadict['contrast'] = contrast
 
     autofocusfreq = float(mif_dict['MosaicInfo']['TileInfo']['AutoTune']['AutoFocusFrequency'])
     autofocusbool = True
