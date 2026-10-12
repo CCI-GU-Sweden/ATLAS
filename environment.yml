@@ -2,20 +2,21 @@ name: atlas-env
 channels:
   - conda-forge
 dependencies:
-  - python=3.10
+  - python=3.11
   - ipykernel
   - jupyterlab
   - pandas
   - xmltodict
   - matplotlib
   - scikit-image=0.25.2
-  - zarr
+  - zarr=3
   - shapely
+  - libssh2
   - pip  # in case you need pip later
   - pip:
     - pylibCZIrw
     - czitools
 
-# Post-build commands
-postBuild:
-  - python -m ipykernel install --user --name atlas-env --display-name "Python ATLAS-env"
+# Post-build commands: tgus us ugbired by conda, run after env is created to install the ipykernel for Jupyter notebooks.
+# postBuild:
+#   - python -m ipykernel install --user --name atlas-env --display-name "Python ATLAS-env"

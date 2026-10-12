@@ -5,7 +5,7 @@ Utility functions for IO tasks in the Atlas package.
 import re
 import shutil
 import zarr
-from pathlib import Path
+from pathlib import Path, PurePath
 from pylibCZIrw import czi as pyczi
 import numpy as np
 import pandas as pd
@@ -64,9 +64,9 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
         raise ValueError(f"alignment_df is missing required columns: {missing_cols}")
 
     # Ensure 'moving_path' and 'reference_path' contain valid Paths
-    if not all(isinstance(p, (Path, str)) for p in alignment_df["moving_path"]):
+    if not all(isinstance(p, (PurePath, str)) for p in alignment_df["moving_path"]):
         raise TypeError("Column 'moving_path' must contain Path or string file paths.")
-    if not all(isinstance(p, (Path, str)) for p in alignment_df["reference_path"]):
+    if not all(isinstance(p, (PurePath, str)) for p in alignment_df["reference_path"]):
         raise TypeError("Column 'reference_path' must contain Path or string file paths.")
 
     # Ensure 'cumulative_ROI' contains valid ROI objects
@@ -129,11 +129,25 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
     if z0_path.exists():
         rm_tree(z0_path)
 
-    store = zarr.DirectoryStore(z0_path)
+    # Zarr v2 code (commented out)
+    # store = zarr.DirectoryStore(z0_path)
+    # chunk_size = 1024
+    # #print(f'Chunk size: {chunk_size},{chunk_size},1')
+    # # I will keep the z, y, x arrangement
+    # z = zarr.creation.open_array(store=store, mode='a', shape=(y_shape, x_shape, n_z), chunks=(chunk_size,chunk_size,1), dtype=original_image_dtype)
+
+    # Zarr v3 code
+    store = zarr.storage.LocalStore(z0_path)
     chunk_size = 1024
-    #print(f'Chunk size: {chunk_size},{chunk_size},1')
-    # I will keep the z, y, x arrangement
-    z = zarr.creation.open_array(store=store, mode='a', shape=(y_shape, x_shape, n_z), chunks=(chunk_size,chunk_size,1), dtype=original_image_dtype)
+    # mode="a" allows appending to the array if it already exists, or creating it if it doesn't. If overwriting is desired, you can use mode "w" instead.
+    z = zarr.open_array(
+        store=store,
+        mode="a",
+        shape=(y_shape, x_shape, n_z),
+        chunks=(chunk_size, chunk_size, 1),
+        dtype=original_image_dtype,
+        zarr_format=2,
+    )
 
     for idx in range(z.shape[2]):
         current_tif_path = alignment_df['moving_path'][idx]
@@ -214,7 +228,7 @@ def zarr_array_to_czi(zarr_path, pixel_size, end_str):
     ValueError
         If the Zarr array has an unexpected shape.
     """
-    assert isinstance(zarr_path, Path), "zarr_path must be a Path object"
+    assert isinstance(zarr_path, PurePath), "zarr_path must be a Path object"
     assert isinstance(pixel_size, dict), "pixel_size must be a dictionary"
     assert 'Value' in pixel_size and 'Axial' in pixel_size and 'Unit' in pixel_size, "pixel_size must contain 'Value', 'Axial', and 'Unit' keys"
     assert pixel_size['Unit'] == "µm", "Pixel size unit must be in microns (µm)"
@@ -264,7 +278,7 @@ def is_there_a_single_tif(folder_path):
         - True and the .tif file if exactly one is found.
         - False and None if no .tif or multiple .tif files are found.
     """
-    assert isinstance(folder_path, Path), "folder_path must be a pathlib.Path object"
+    assert isinstance(folder_path, PurePath), "folder_path must be a pathlib.Path object"
 
     counter = 0
     tiffout = None
@@ -287,28 +301,49 @@ def is_there_a_single_tif(folder_path):
         print("Folder has no .tif files.")
         return False, None  # No .tif files found
     
+# def extract_s_number(filepath):
+#     """
+#     Extracts the S number from a filename using a specific pattern (_S_\d+_).
+    
+#     Parameters:
+#     ----------
+#     filepath : Path
+#         The file path from which to extract the S number.
+    
+#     Returns:
+#     -------
+#     int or None
+#         - The extracted S number if found.
+#         - None if the pattern does not exist in the filename.
+#     """
+#     assert isinstance(filepath, PurePath), "filepath must be a pathlib.Path object"
+#     assert filepath.is_file(), "filepath must be an existing file"
+    
+#     pattern = re.compile(r"_S_(\d+)")
+#     match = pattern.search(filepath.name)  # Only search in the filename
+    
+#     return int(match.group(1)) if match else None  # Return None if no match found
+
 def extract_s_number(filepath):
     """
-    Extracts the S number from a filename using a specific pattern (_S_\d+_).
-    
-    Parameters:
+    Extract the S number from a file or directory name.
+
+    Parameters
     ----------
-    filepath : Path
-        The file path from which to extract the S number.
-    
-    Returns:
+    filepath : str or Path
+        Path or name containing an S number.
+
+    Returns
     -------
     int or None
-        - The extracted S number if found.
-        - None if the pattern does not exist in the filename.
+        The extracted S number, or None if no match is found.
     """
-    assert isinstance(filepath, Path), "filepath must be a pathlib.Path object"
-    assert filepath.is_file(), "filepath must be an existing file"
-    
-    pattern = re.compile(r"_S_(\d+)")
-    match = pattern.search(filepath.name)  # Only search in the filename
-    
-    return int(match.group(1)) if match else None  # Return None if no match found
+    _filepath = Path(filepath)
+
+    pattern = re.compile(r"(?:^|_)S_(\d+)")
+    match = pattern.search(_filepath.name)
+
+    return int(match.group(1)) if match else None
 
 def reorder_files_by_s_number(file_list, new_order):
     """
@@ -393,7 +428,7 @@ def rm_tree(pth):
     pth : Path
         The directory to be removed.
     """
-    assert isinstance(pth, Path), "pth must be a pathlib.Path object"
+    assert isinstance(pth, PurePath), "pth must be a pathlib.Path object"
     assert pth.is_dir(), "pth must be an existing directory"
     
     for child in pth.glob('*'):
@@ -412,7 +447,7 @@ def create_empty_folder(folder_path):
     folder_path : Path
         Path to the folder that needs to be created or emptied.
     """
-    assert isinstance(folder_path, Path), "folder_path must be a pathlib.Path object"
+    assert isinstance(folder_path, PurePath), "folder_path must be a pathlib.Path object"
     
     if folder_path.exists():
         rm_tree(folder_path)  # Use rm_tree to remove contents
