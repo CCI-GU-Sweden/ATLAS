@@ -187,28 +187,25 @@ def find_slice_valid_path(raw_data_folder):
     # reject a data folder if the status is not completed
     if mif_dict['MosaicInfo']['Status'].lower() != "completed":
         return None, "Incomplete acquisition"
+
+    # TODO: Consider validating per-tile "Tile Complete" events in MosaicInfo/Log
+    # and TIFF readability. Currently only overall completion, tile counts,
+    # and filename presence are checked.
     
-    # check if the tiff files for all the tiles exist in the folder
-    # first check if the numbers match
-    nrows = float(mif_dict['MosaicInfo']['TileInfo']['NumTilesY'])
-    ncols = float(mif_dict['MosaicInfo']['TileInfo']['NumTilesX'])
-    ntiles = nrows * ncols
+    # Count acquired tiles, since some positions in the grid may be omitted.
+    tile_list = mif_dict['MosaicInfo']['Tiles']['Tile']
+    # xmltodict returns a dictionary for a single tile.
+    if isinstance(tile_list, dict):
+        tile_list = [tile_list]
+    ntiles = len(tile_list)
     if ntiles != num_tif_files:
         return None, "unequal number of actual tif files and tif files listed in .ve-mif metadata"
     
     # check whether the filenames in the list exist in the folder
-    tile_list = mif_dict['MosaicInfo']['Tiles']['Tile']
-    # expect a dict if single tile, else a list of dicts
-    if isinstance(tile_list, dict):
-        filename = filename_helper(tile_list["Filename"])
+    for tile in tile_list:
+        filename = filename_helper(tile["Filename"])
         if filename not in tif_files_list:
             return None, "tif filenames and metadata tif files do not agree"
-        
-    elif isinstance(tile_list, list):
-        for tile in tile_list:
-            filename = filename_helper(tile["Filename"])
-            if filename not in tif_files_list:
-                return None, "tif filenames and metadata tif files do not agree"
     
     # check whether the pixel sizes are equal for all the tiles
     # no need as there is just a single pixel size in the metadata
