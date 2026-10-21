@@ -80,5 +80,6 @@ Use `ATLAS-stage-import.ipynb` to process a series. It writes
 `stage_stitched_transforms_S_<number>.json` next to the section folders,
 skipping TIFFs that already exist. The CSV records tile metadata and nominal
 placement; the JSON records zero registration corrections. The notebook
-adds a configurable 1 µm buffer; the function defaults to no added buffer.
+defaults to no added buffer, matching the function; raw import uses 1 µm
+to allow for registration shifts.
 Local examples and comparison results under `private-data/` are Git-ignored.

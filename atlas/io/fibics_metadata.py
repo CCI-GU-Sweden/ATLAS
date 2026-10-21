@@ -360,7 +360,12 @@ def get_metadata_for_stitched_tif(mif_file: PurePath):
     metadict['Detector'] = mif_dict['MosaicInfo']['SetupInfo']['Signal']['Detector']
 
     bsd_gain = None
-    for detector_item in mif_dict['MosaicInfo']['SetupInfo']['Signal']['DetectorInfo']['item']:
+    detector_items = mif_dict['MosaicInfo']['SetupInfo']['Signal']['DetectorInfo']['item']
+    # xmltodict returns a dict for one item, and a list for repeated items.
+    # SE2 acquisitions can have only a Collector setting and no BSD Gain.
+    if isinstance(detector_items, dict):
+        detector_items = [detector_items]
+    for detector_item in detector_items:
         if detector_item['@name'].lower() == "bsd gain":
             bsd_gain = detector_item['#text']
             break
