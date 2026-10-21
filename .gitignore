@@ -1,6 +1,9 @@
 # Ignore everything inside the data folder
 /data/*
 
+# Local example datasets
+/private-data/
+
 # But not the data folder itself
 !/data/
 

@@ -1142,7 +1142,63 @@ def stitch_ATLAS_tiles(
     return stitched_img, mif_tile_df, transform_dict
 
 
-def save_stitched_image(output_tif_path: PurePath, stitched_img: np.ndarray, mif_metadict: dict) -> None:
+def stage_stitching(mif_file, *, buffer_microns=0):
+    """Place tiles using stage metadata, without registration or cropping.
+
+    Scan rotation and pixel size are handled by ``get_tiles_dataframe``,
+    using the same coordinate conventions as ``stitch_ATLAS_tiles``.
+    Later tiles in acquisition order overwrite earlier tiles in overlaps.
+    Disconnected tiles and images containing only zero or saturated pixels
+    are retained. The canvas covers all nominal tile bounds, including gaps.
+
+    Parameters
+    ----------
+    mif_file : str or pathlib.Path
+        FIBICS .ve-mif file with TIFF tiles in the same directory.
+    buffer_microns : float, default=0
+        Nonnegative offset added to the nominal tile positions. Zero uses
+        the full tile extent without adding a leading margin.
+
+    Returns
+    -------
+    stitched_img : numpy.ndarray
+        Uncropped image in the internal stitching orientation. Use
+        ``save_stitched_image(..., compression="deflate")`` to save with
+        lossless compression and the usual exported TIFF orientation.
+    mif_tile_df : pandas.DataFrame
+        Tile metadata sorted by acquisition time.
+    transform_dict : dict[str, numpy.ndarray]
+        Zero registration corrections relative to tile 0; stage positions
+        are already represented in the tile geometries.
+    """
+    mif_file = Path(mif_file)
+    if not mif_file.is_file():
+        raise FileNotFoundError(f"MIF file does not exist: {mif_file}")
+    if mif_file.suffix.lower() != ".ve-mif":
+        raise ValueError(f"Expected a .ve-mif file, got: {mif_file.name}")
+    if not np.isfinite(buffer_microns) or buffer_microns < 0:
+        raise ValueError("buffer_microns must be finite and non-negative")
+
+    mif_tile_df = get_tiles_dataframe(
+        mif_file, buffer_microns=buffer_microns
+    ).reset_index(drop=True)
+    if mif_tile_df.empty:
+        raise ValueError(f"No tiles found in {mif_file}")
+    mif_tile_df["raw_data_folder"] = mif_file.parent
+    transform_dict = {
+        f"t{index}0": np.zeros(2) for index in range(len(mif_tile_df))
+    }
+    stitched_img = apply_transforms_and_stitch(mif_tile_df, transform_dict)
+    return stitched_img, mif_tile_df, transform_dict
+
+
+def save_stitched_image(
+    output_tif_path: PurePath,
+    stitched_img: np.ndarray,
+    mif_metadict: dict,
+    *,
+    compression=None,
+) -> None:
 
     """
     Saves the stitched image to a specified path
@@ -1155,6 +1211,10 @@ def save_stitched_image(output_tif_path: PurePath, stitched_img: np.ndarray, mif
                     The array storing the stitched image.
     mif_metadict : dict
                     Acquisition metadata from the mif file.
+    compression : str or None, optional
+                    TIFF compression. Use "deflate" for lossless compression
+                    of zero-filled stage mosaics. Default None preserves
+                    the existing uncompressed output.
     
     Returns:
     -------
@@ -1163,6 +1223,7 @@ def save_stitched_image(output_tif_path: PurePath, stitched_img: np.ndarray, mif
     import tifffile as tiff
     tiff.imwrite(output_tif_path, 
                 np.flipud(stitched_img), 
+                compression=compression,
                 metadata={"axes": "YX", "AcquisitionMetadata": mif_metadict})
 
     return
