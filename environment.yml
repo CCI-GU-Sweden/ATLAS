@@ -4,6 +4,8 @@ channels:
 dependencies:
   - python=3.11
   - ipykernel
+  # WEBKNOSSOS requires psutil 6; newer IPython releases require psutil 7.
+  - ipython=9.10.1
   - jupyterlab
   - pandas
   - xmltodict
@@ -16,6 +18,9 @@ dependencies:
   - pip:
     - pylibCZIrw
     - czitools
+    - webknossos==4.3.2
+    # Newer Pydantic requires typing-extensions beyond WEBKNOSSOS's upper bound.
+    - pydantic==2.13.5
 
 # Post-build commands: tgus us ugbired by conda, run after env is created to install the ipykernel for Jupyter notebooks.
 # postBuild:

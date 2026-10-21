@@ -83,3 +83,35 @@ placement; the JSON records zero registration corrections. The notebook
 defaults to no added buffer, matching the function; raw import uses 1 µm
 to allow for registration shifts.
 Local examples and comparison results under `private-data/` are Git-ignored.
+
+## Transfer an aligned WEBKNOSSOS region
+
+`transfer_wk_annotation_region.py` downloads the user bounding box from an
+annotation on the fine-aligned dataset, then optionally uploads the image data
+using a different organization's token. Configure the inputs at the top of the
+script. The default test magnification is `32-32-8`; `DO_UPLOAD = False` downloads
+only. Tokens can be entered at the top or supplied as `WK_SOURCE_TOKEN` and
+`WK_TARGET_TOKEN` environment variables. The destination organization is taken
+from the target token; an optional expected organization ID can be specified.
+The uploaded name defaults to `<source dataset name>_mag<MAG>`;
+set `TARGET_DATASET_NAME` to override it.
+
+The script lists bounding boxes and requires an index when there are several.
+It selects image/color layers by default, preserves voxel size and source
+coordinates, and stores the subset as compressed Zarr v3 under `private-data/`.
+Only the requested magnification is downloaded. Coarse voxels can extend to
+the next magnification-aligned boundary. No full-resolution data or annotation
+contents are transferred.
+
+Completed downloads are recorded locally and reused for upload retries. A
+partial download or a changed selection requires a new output directory.
+For server-side display transformations, use a materialized aligned dataset
+before transferring the selected region.
+
+The SDK and compatible IPython/Pydantic versions are included in
+`environment.yml`. Run with:
+
+```bash
+conda activate atlas-env
+python transfer_wk_annotation_region.py
+```

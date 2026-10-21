@@ -42,6 +42,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest",
+    "webknossos==4.3.2",
 ]
 
 [build-system]
