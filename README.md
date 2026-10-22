@@ -28,6 +28,16 @@ being moved from notebooks/scripts into an installable package.
 pip install atlas-cci-align
 ```
 
+To work from a local checkout, run these commands from the repository root:
+
+```bash
+conda env create --file environment.yml
+conda activate atlas-env
+```
+
+The environment file also installs this checkout in editable mode, so code
+changes are available without reinstalling. Keep the checkout in place.
+
 The distribution name is `atlas-cci-align`, while the Python package is imported
 as:
 

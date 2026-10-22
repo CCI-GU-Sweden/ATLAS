@@ -21,6 +21,8 @@ dependencies:
     - webknossos==4.3.2
     # Newer Pydantic requires typing-extensions beyond WEBKNOSSOS's upper bound.
     - pydantic==2.13.5
+    # Install this checkout in editable mode (environment.yml lives at its root).
+    - -e .
 
 # Post-build commands: tgus us ugbired by conda, run after env is created to install the ipykernel for Jupyter notebooks.
 # postBuild:
