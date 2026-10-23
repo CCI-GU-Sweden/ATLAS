@@ -997,6 +997,59 @@ def apply_transforms_and_stitch(mif_tile_df, transform_dict, reference_tile=0):
 
     return stitched_img
 
+def build_stitching_metadata(tiles_df, transform_dict, reference_tile, crop_x, crop_y, cropped_height, cropped_width):
+
+    placements = {}
+
+    for index, row in tiles_df.iterrows():
+        shift_x, shift_y = transform_dict[f"t{index}{reference_tile}"]
+
+        x0_pixel_phase_corrected = int(row["X0_pix"] + shift_x)
+        y0_pixel_phase_corrected = int(row["Y0_pix"] + shift_y)
+
+        x1_pixel_phase_corrected = int(row["X1_pix"] + shift_x)
+        y1_pixel_phase_corrected = int(row["Y1_pix"] + shift_y)
+
+        placements[index] = (x0_pixel_phase_corrected, y0_pixel_phase_corrected, x1_pixel_phase_corrected, y1_pixel_phase_corrected)
+
+    xmin = min(0, *([p[0] for p in placements.values()]))
+    ymin = min(0, *([p[1] for p in placements.values()]))
+
+    x_canvas_corr = -xmin
+    y_canvas_corr = -ymin
+
+    tile_transforms = {}
+
+    for index, row in tiles_df.iterrows():
+        x0_pixel_phase_corrected, y0_pixel_phase_corrected, x1_pixel_phase_corrected, y1_pixel_phase_corrected = placements[index]
+        x_canvas = x0_pixel_phase_corrected + x_canvas_corr
+        y_canvas = y0_pixel_phase_corrected + y_canvas_corr
+
+        x_cropped = x_canvas - crop_x
+        y_cropped = y_canvas - crop_y
+
+        x_saved = x_cropped
+        y_saved = cropped_height - y_cropped - int(row["ImageHeight"])
+
+        matrix = np.eye(4)
+        matrix[3, 0] = x_saved
+        matrix[3, 1] = y_saved
+
+        tile_transforms[str(index)] = {
+            "filename": str(row["Filename"]),
+            "tile_to_stitched": matrix,
+            "origin_in_stitched": [x_saved, y_saved],
+            "width": int(row["ImageWidth"]),
+            "height": int(row["ImageHeight"]),
+        }
+    return {"reference_tile": reference_tile,
+            "image_width": cropped_width,
+            "image_height": cropped_height,
+            "crop_origin": [crop_x, crop_y],
+            "canvas_correction": [x_canvas_corr, y_canvas_corr],
+            "tiles": tile_transforms
+            }
+
 
 def stitch_ATLAS_tiles(
     mif_file,
@@ -1134,12 +1187,26 @@ def stitch_ATLAS_tiles(
     if valid_rows.size == 0:
         raise ValueError("The stitched image contains no valid pixels")
 
+    crop_y = int(valid_rows.min())
+    crop_x = int(valid_columns.min())
+
     stitched_img = stitched_img[
-        valid_rows.min() : valid_rows.max() + 1,
-        valid_columns.min() : valid_columns.max() + 1,
+        crop_y : valid_rows.max() + 1,
+        crop_x : valid_columns.max() + 1,
     ]
 
-    return stitched_img, mif_tile_df, transform_dict
+    cropped_height, cropped_width = stitched_img.shape[:2]
+
+    stitching_metadata = build_stitching_metadata(mif_tile_df,
+                                                  transform_dict,
+                                                  reference_tile,
+                                                  crop_x,
+                                                  crop_y,
+                                                  cropped_height,
+                                                  cropped_width
+                                                  )
+
+    return stitched_img, mif_tile_df, transform_dict, stitching_metadata
 
 
 def stage_stitching(mif_file, *, buffer_microns=0):
