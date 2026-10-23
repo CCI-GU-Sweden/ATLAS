@@ -109,12 +109,23 @@ set `TARGET_DATASET_NAME` to override it.
 The script lists bounding boxes and requires an index when there are several.
 It selects image/color layers by default, preserves voxel size and source
 coordinates, and stores the subset as compressed Zarr v3 under `private-data/`.
-Only the requested magnification is downloaded. Coarse voxels can extend to
-the next magnification-aligned boundary. No full-resolution data or annotation
-contents are transferred.
+Only the requested magnification is downloaded. With `BUILD_PYRAMID = True`
+(the default), the script then creates compressed coarser levels locally using
+anisotropic downsampling, up to `PYRAMID_COARSEST_MAG` (default `64`). This
+also repairs an existing completed download that has only one resolution.
+Use `MAG = "1"` to transfer full-resolution data with a viewing pyramid.
+Generation always starts at the downloaded magnification: a `16-16-4` subset
+gets only coarser levels, never a synthesized mag 1. The exact levels follow
+the voxel-size-aware anisotropic sampling scheme.
+Coarse voxels can extend to the next magnification-aligned boundary. No
+annotation contents are transferred.
 
-Completed downloads are recorded locally and reused for upload retries. A
-partial download or a changed selection requires a new output directory.
+Completed downloads and pyramids are recorded locally and reused for upload
+retries. Upload records include the magnifications, so adding a pyramid
+triggers a new upload even if an earlier single-resolution upload was recorded.
+This creates a new destination dataset; the previous upload is retained.
+Interrupted pyramid builds are regenerated from the downloaded resolution.
+A partial download or a changed selection requires a new output directory.
 For server-side display transformations, use a materialized aligned dataset
 before transferring the selected region.
 
