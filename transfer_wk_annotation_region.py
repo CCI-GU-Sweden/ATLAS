@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 import webknossos as wk
+from cluster_tools import get_executor
 
 
 # User inputs. Tokens may be set here or through the environment variables.
@@ -18,6 +19,9 @@ TARGET_TOKEN = os.environ.get("WK_TARGET_TOKEN", "")
 SOURCE_URL = "https://webknossos.org"
 TARGET_URL = "https://webknossos.org"
 MAG = "32-32-8"
+BUILD_PYRAMID = True
+PYRAMID_COARSEST_MAG = "64"  # Must be coarser than MAG.
+PYRAMID_JOBS = 4
 
 # None selects the only box automatically. Set a zero-based index if several
 # boxes are listed. Coordinates stay in full-resolution (mag-1) voxel units.
@@ -113,6 +117,59 @@ def download_subset(annotation, remote, output_dir, mag, layer_names=None, box_i
     return dataset
 
 
+def magnification_signature(dataset):
+    """Record which resolutions an upload contains, for each layer."""
+    return {
+        name: sorted(str(mag) for mag in layer.mags)
+        for name, layer in dataset.layers.items()
+    }
+
+
+def ensure_pyramid(dataset, output_dir):
+    """Build coarser levels, including when reusing an older download.
+
+    A completion record is written only after all downsampling finishes.
+    Interrupted builds are regenerated from the downloaded resolution, so
+    partially written magnifications are not treated as complete inputs.
+    """
+    marker = Path(output_dir) / ".atlas-transfer.json"
+    record = json.loads(marker.read_text())
+    base_mag = wk.Mag(record["download"]["mag"])
+    coarsest_mag = wk.Mag(PYRAMID_COARSEST_MAG)
+    if (
+        coarsest_mag.max_dim <= base_mag.max_dim
+        or any(a < b for a, b in zip(coarsest_mag.to_vec3_int(), base_mag.to_vec3_int()))
+    ):
+        raise ValueError("PYRAMID_COARSEST_MAG must be coarser than the downloaded MAG.")
+    settings = {
+        "from_mag": str(base_mag),
+        "coarsest_mag": str(coarsest_mag),
+        "sampling_mode": "anisotropic",
+        "interpolation_mode": "default",
+    }
+    expected = {**settings, "magnifications": magnification_signature(dataset)}
+    if record.get("pyramid") == expected:
+        print(f"Reusing completed pyramid: {expected['magnifications']}")
+        return
+
+    record.pop("pyramid", None)
+    marker.write_text(json.dumps(record, indent=2) + "\n")
+    print(f"Building compressed pyramid from {base_mag} up to {coarsest_mag}")
+    with get_executor("multiprocessing", max_workers=PYRAMID_JOBS) as executor:
+        for layer in dataset.layers.values():
+            layer.downsample(
+                from_mag=base_mag,
+                coarsest_mag=coarsest_mag,
+                sampling_mode=wk.SamplingModes.ANISOTROPIC,
+                compress=True,
+                allow_overwrite=True,
+                executor=executor,
+            )
+    record["pyramid"] = {**settings, "magnifications": magnification_signature(dataset)}
+    marker.write_text(json.dumps(record, indent=2) + "\n")
+    print(f"Pyramid complete: {record['pyramid']['magnifications']}")
+
+
 def main(do_upload=False):
     if not SOURCE_TOKEN:
         raise ValueError("Set SOURCE_TOKEN or the WK_SOURCE_TOKEN environment variable.")
@@ -127,6 +184,9 @@ def main(do_upload=False):
             annotation, remote, OUTPUT_DIR, wk.Mag(MAG),
             layer_names=LAYER_NAMES, box_index=BOUNDING_BOX_INDEX,
         )
+
+    if BUILD_PYRAMID:
+        ensure_pyramid(dataset, OUTPUT_DIR)
 
     if not do_upload:
         print("Download complete. Set DO_UPLOAD = True to upload this local copy.")
@@ -143,13 +203,25 @@ def main(do_upload=False):
             "url": TARGET_URL, "organization_id": organization,
             "name": target_dataset_name,
         }
-        if record.get("upload", {}).get("destination") == destination:
+        magnifications = magnification_signature(dataset)
+        previous_upload = record.get("upload", {})
+        if (
+            previous_upload.get("destination") == destination
+            and previous_upload.get("magnifications") == magnifications
+        ):
             print(f"Already uploaded: {record['upload']['dataset_url']}")
             print(f"Local download retained at: {Path(OUTPUT_DIR).resolve()}")
             return
+        if previous_upload:
+            print(f"Previous upload retained at: {previous_upload['dataset_url']}")
+            print("Creating a new uploaded copy with the current magnifications.")
         print(f"Uploading {target_dataset_name} to organization {organization}")
         uploaded = dataset.upload(new_dataset_name=target_dataset_name)
-        record["upload"] = {"destination": destination, "dataset_url": uploaded.url}
+        record["upload"] = {
+            "destination": destination,
+            "dataset_url": uploaded.url,
+            "magnifications": magnifications,
+        }
         marker.write_text(json.dumps(record, indent=2) + "\n")
         print(f"Upload complete: {uploaded.url}")
         print(f"Local download retained at: {Path(OUTPUT_DIR).resolve()}")
