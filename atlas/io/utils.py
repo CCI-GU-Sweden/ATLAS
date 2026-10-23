@@ -160,7 +160,12 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
 
     for idx in range(z.shape[2]):
         current_tif_path = alignment_df['moving_path'][idx]
-        img_idx = tiff.imread(current_tif_path)
+        with tiff.TiffFile(current_tif_path) as tif:
+            img_idx = tif.asarray()
+
+            tiff_metadata = json.loads(tif.pages[0].description)
+
+        stitching_metadata = tiff_metadata["StitchingMetadata"]
 
         if use_down_sample:
             down_scale = alignment_df['down_scale'][idx]
@@ -214,7 +219,9 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
 
         alignment_metadata["images"][str(idx)] = {"filename": str(current_tif_path),
                                                   "stitched_to_aligned": matrix.tolist(),
-                                                  "down_scale": int(alignment_df["down_scale"][idx]),}
+                                                  "down_scale": int(alignment_df["down_scale"][idx]),
+                                                  "stitching_metadata": stitching_metadata
+                                                  }
 
         z[ty0:ty1,tx0:tx1, idx] = img_rescale[iy0:iy1,ix0:ix1]
         print(f"Done for idx {idx}")
@@ -224,6 +231,7 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
         with open(metadata_path, "w") as f:
             json.dump(alignment_metadata, f, indent=4)
 
+    z.attrs["AtlasMetadata"] = alignment_metadata
     return z, z0_path
 
 def zarr_array_to_czi(zarr_path, pixel_size, end_str):

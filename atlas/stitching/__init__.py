@@ -1035,13 +1035,13 @@ def build_stitching_metadata(tiles_df, transform_dict, reference_tile, crop_x, c
         matrix[3, 0] = x_saved
         matrix[3, 1] = y_saved
 
-        tile_transforms[str(index)] = {
-            "filename": str(row["Filename"]),
-            "tile_to_stitched": matrix,
-            "origin_in_stitched": [x_saved, y_saved],
-            "width": int(row["ImageWidth"]),
-            "height": int(row["ImageHeight"]),
-        }
+        tile_transforms[str(index)] = {"filename": str(row["Filename"]),
+                                       "tile_to_stitched": matrix.tolist(),
+                                       "origin_in_stitched": [x_saved, y_saved],
+                                       "width": int(row["ImageWidth"]),
+                                       "height": int(row["ImageHeight"]),
+                                       }
+
     return {"reference_tile": reference_tile,
             "image_width": cropped_width,
             "image_height": cropped_height,
