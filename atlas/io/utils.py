@@ -165,7 +165,7 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
 
             tiff_metadata = json.loads(tif.pages[0].description)
 
-        stitching_metadata = tiff_metadata["StitchingMetadata"]
+        stitching_metadata = tiff_metadata["stitching_metadata"]
 
         if use_down_sample:
             down_scale = alignment_df['down_scale'][idx]
@@ -275,7 +275,10 @@ def zarr_array_to_czi(zarr_path, pixel_size, end_str):
     pix_z = pixel_size['Axial']
     
     zarr_array = zarr.open_array(zarr_path, mode="r")  # Open as a Zarr array
-    
+
+    atlas_metadata = zarr_array.attrs["AtlasMetadata"]
+    atlas_metadata_json = json.dumps(atlas_metadata)
+
     if len(zarr_array.shape) < 3:
         raise ValueError(f"Expected a 3D Zarr array, got shape {zarr_array.shape}")
     
@@ -296,6 +299,11 @@ def zarr_array_to_czi(zarr_path, pixel_size, end_str):
             scale_x=float(pix_x) * 10 ** -6,
             scale_y=float(pix_y) * 10 ** -6,
             scale_z=float(pix_z) * 10 ** -6,
+
+            custom_attributes={
+                "AtlasMetadata": atlas_metadata_json
+            }
+
         )
     
     return newczi
