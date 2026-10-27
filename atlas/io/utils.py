@@ -92,7 +92,7 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
     y1_values = []
 
     for roi, ds in zip(alignment_df['cumulative_ROI'], alignment_df['down_scale']):
-        if not use_down_sample:
+        if use_down_sample:
             ds = 1
 
         if roi is not None:
