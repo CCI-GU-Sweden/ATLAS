@@ -456,11 +456,26 @@ def pairwise_alignment(alignment_df):
         if not isinstance(down_scale, (int, float)) or down_scale <= 0:
             raise ValueError(f"Invalid 'down_scale' value at index {index}: {down_scale}. Must be a positive number.")
 
+        ## Load moving image
+        #mov_path = row["moving_path"]
+        #mov_img = tiff.imread(mov_path)
+#
+        ## Load reference image
+        #ref_path = row["reference_path"]
+        #ref_img = tiff.imread(ref_path)
+#
+        ## ✅ Downscale for performance optimization
+        #mov_img_ds = downscale_local_mean(mov_img, (down_scale, down_scale)).astype(mov_img.dtype)
+        #ref_img_ds = downscale_local_mean(ref_img, (down_scale, down_scale)).astype(ref_img.dtype)
+#
+        #print(f"Processing alignment: ref -> {ref_path.name}, moving -> {mov_path.name}")
+
         # ✅ Compute translation shift
-        ref_ROI, mov_ROI, current_shift = align_image_pair(reference_path=row["reference_path"],
-                                                           moving_path=row["moving_path"],
-                                                           down_scale=down_scale
-                                                           )
+            ref_ROI, mov_ROI, current_shift = align_image_pair(reference_path=row["reference_path"],
+                                                               moving_path=row["moving_path"],
+                                                               down_scale=down_scale
+                                                               )
+
 
         # ✅ Update the DataFrame correctly
         alignment_df.loc[index, "moving_ROI"] = mov_ROI
@@ -913,30 +928,54 @@ def calculate_cumulative_shifts(input_df):
     # ✅ Process each row sequentially
     for index, row in input_df.iterrows():
         if index == 0:
-            cumulative_shift = np.array([0., 0.])  # Reference image has no shift
+            previous_cumulative_shift = np.array([0., 0.])
+            current_shift = np.array([0., 0.])  # Reference image has no shift
         else:
+            previous_cumulative_shift = input_df.loc[index - 1, "cumulative_shift"]
             current_shift = row["current_shift"]
-            if not isinstance(current_shift, np.ndarray) or current_shift.shape != (2,):
-                raise ValueError(f"Invalid 'current_shift' at index {index}. Expected np.ndarray of shape (2,), got {type(current_shift)}.")
-            cumulative_shift = input_df.loc[index - 1, "cumulative_shift"] + current_shift  # Accumulate shifts
+
+        if not isinstance(current_shift, np.ndarray) or current_shift.shape != (2,):
+            raise ValueError(f"Invalid 'current_shift' at index {index}. Expected np.ndarray of shape (2,), got {type(current_shift)}.")
+        #cumulative_shift = input_df.loc[index - 1, "cumulative_shift"] + current_shift  # Accumulate shifts
+
+        moving_ROI = row["moving_ROI"]
+
+        if not isinstance(moving_ROI, ROI):
+            raise ValueError(
+                f"Invalid 'moving_ROI' at index {index}. Expected ROI instance, got {type(moving_ROI)}.")
+
+        cumulative_shift, cumulative_ROI = calculate_cumulative_shift(previous_cumulative_shift, current_shift, moving_ROI)
 
         input_df.at[index, "cumulative_shift"] = cumulative_shift  # ✅ Store cumulative shift
-
-        # ✅ Compute and store cumulative ROI
-        moving_ROI = row["moving_ROI"]
-        if not isinstance(moving_ROI, ROI):
-            raise ValueError(f"Invalid 'moving_ROI' at index {index}. Expected ROI instance, got {type(moving_ROI)}.")
-        
-        cumulative_ROI_x0 = int(moving_ROI.x0 + cumulative_shift[1])  # Shift in x-direction
-        cumulative_ROI_x1 = int(moving_ROI.x1 + cumulative_shift[1])
-        cumulative_ROI_y0 = int(moving_ROI.y0 + cumulative_shift[0])  # Shift in y-direction
-        cumulative_ROI_y1 = int(moving_ROI.y1 + cumulative_shift[0])
-        cumulative_ROI = ROI(x0=cumulative_ROI_x0, x1=cumulative_ROI_x1, y0=cumulative_ROI_y0, y1=cumulative_ROI_y1)
-
         input_df.loc[index, "cumulative_ROI"] = cumulative_ROI  # ✅ Store cumulative ROI
-    
+
+        ## ✅ Compute and store cumulative ROI
+        #moving_ROI = row["moving_ROI"]
+        #if not isinstance(moving_ROI, ROI):
+        #    raise ValueError(f"Invalid 'moving_ROI' at index {index}. Expected ROI instance, got {type(moving_ROI)}.")
+        #
+        #cumulative_ROI_x0 = int(moving_ROI.x0 + cumulative_shift[1])  # Shift in x-direction
+        #cumulative_ROI_x1 = int(moving_ROI.x1 + cumulative_shift[1])
+        #cumulative_ROI_y0 = int(moving_ROI.y0 + cumulative_shift[0])  # Shift in y-direction
+        #cumulative_ROI_y1 = int(moving_ROI.y1 + cumulative_shift[0])
+        #cumulative_ROI = ROI(x0=cumulative_ROI_x0, x1=cumulative_ROI_x1, y0=cumulative_ROI_y0, y1=cumulative_ROI_y1)
+#
     return input_df
 
+def calculate_cumulative_shift(previous_cumulative_shift,
+                               current_shift,
+                               moving_ROI
+                               ):
+
+    cumulative_shift = previous_cumulative_shift + current_shift
+
+    cumulative_ROI = ROI(x0=int(moving_ROI.x0 + cumulative_shift[1]),
+                         x1=int(moving_ROI.x1 + cumulative_shift[1]),
+                         y0=int(moving_ROI.y0 + cumulative_shift[0]),
+                         y1=int(moving_ROI.y1 + cumulative_shift[0])
+                         )
+
+    return cumulative_shift, cumulative_ROI
 
 def correct_z_alignment_from_points(
     alignment_df,
