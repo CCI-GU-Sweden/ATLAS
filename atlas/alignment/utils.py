@@ -390,6 +390,21 @@ def initialize_alignment_df_points(tif_list_sorted, down_scale=10):
 
     return z_alignment_df
 
+def align_image_pair(reference_path, moving_path, down_scale=10):
+
+    ref_img = tiff.imread(reference_path)
+    mov_img = tiff.imread(moving_path)
+
+    ref_img_ds = downscale_local_mean(ref_img, (down_scale, down_scale)).astype(ref_img.dtype)
+
+    mov_img_ds = downscale_local_mean(mov_img, (down_scale, down_scale)).astype(mov_img.dtype)
+
+    ref_ROI, mov_ROI, current_shift = get_translation(ref_img_ds,
+                                                      mov_img_ds
+                                                      )
+
+    return ref_ROI, mov_ROI, current_shift
+
 def pairwise_alignment(alignment_df):
     """
     Computes the pairwise alignment shifts between moving and reference images.
@@ -441,23 +456,11 @@ def pairwise_alignment(alignment_df):
         if not isinstance(down_scale, (int, float)) or down_scale <= 0:
             raise ValueError(f"Invalid 'down_scale' value at index {index}: {down_scale}. Must be a positive number.")
 
-        # Load moving image
-        mov_path = row["moving_path"]
-        mov_img = tiff.imread(mov_path)
-
-        # Load reference image
-        ref_path = row["reference_path"]
-        ref_img = tiff.imread(ref_path)
-
-        # ✅ Downscale for performance optimization
-        mov_img_ds = downscale_local_mean(mov_img, (down_scale, down_scale)).astype(mov_img.dtype)
-        ref_img_ds = downscale_local_mean(ref_img, (down_scale, down_scale)).astype(ref_img.dtype)
-
-        print(f"Processing alignment: ref -> {ref_path.name}, moving -> {mov_path.name}")
-
         # ✅ Compute translation shift
-        ref_ROI, mov_ROI, current_shift = get_translation(ref_img_ds, mov_img_ds)
-    
+        ref_ROI, mov_ROI, current_shift = align_image_pair(reference_path=row["reference_path"],
+                                                           moving_path=row["moving_path"],
+                                                           down_scale=down_scale
+                                                           )
 
         # ✅ Update the DataFrame correctly
         alignment_df.loc[index, "moving_ROI"] = mov_ROI
