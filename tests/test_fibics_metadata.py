@@ -3,8 +3,23 @@ import xmltodict
 import numpy as np
 import tifffile
 
-from atlas.io import get_metadata_for_stitched_tif
+from atlas.io import get_metadata_for_stitched_tif, get_s_number_from_mif
 from atlas.io.fibics_metadata import get_fibics_tif_scan_pixel_size, get_fibics_mif_pixel_size
+
+
+@pytest.mark.parametrize("folder", [r"D:\project\S_003_1234", "/data/project/S_003_1234"])
+def test_s_number_from_mif_recorded_folder(tmp_path, folder):
+    path = tmp_path / "section.ve-mif"
+    path.write_text(xmltodict.unparse({"MosaicInfo": {"Folder": folder}}))
+    assert get_s_number_from_mif(path) == 3
+
+
+@pytest.mark.parametrize("mosaic", [{"Folder": "/data/no-section"}, {"Status": "Completed"}])
+def test_s_number_from_mif_invalid_folder(tmp_path, mosaic):
+    path = tmp_path / "section.ve-mif"
+    path.write_text(xmltodict.unparse({"MosaicInfo": mosaic}))
+    with pytest.raises(ValueError):
+        get_s_number_from_mif(path)
 
 
 def test_source_pixel_sizes_preserve_units_and_vector_directions(tmp_path):
@@ -47,6 +62,7 @@ def test_stitched_metadata_single_and_multiple_detector_items(
     xml_other = xmltodict.unparse({"Fibics": {"Scan": {"Ux": "0.02", "Uy": "0", "Vx": "0", "Vy": "-0.02"}}})
     tifffile.imwrite(tmp_path / "tile_other.tif", np.ones((2, 2), dtype=np.uint8), extratags=[(51023, "s", 0, xml_other, False)])
     mosaic = {
+        "Folder": r"D:\project\S_003_1234",
         "Date": "2026-10-01T12:00:00",
         "DateFinished": "2026-10-01T12:01:00",
         "SetupInfo": {
@@ -70,6 +86,7 @@ def test_stitched_metadata_single_and_multiple_detector_items(
 
     result = get_metadata_for_stitched_tif(path)
 
+    assert result["atlas_section_number"] == 3
     assert result["Detector"] == detector
     assert result["BSD Gain"] == expected_gain
     assert result["Tile arrangement"] == "R2C2"
