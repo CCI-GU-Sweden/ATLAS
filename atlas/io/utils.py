@@ -31,7 +31,7 @@ def _load_stitching_metadata(tif_path, tiff_metadata):
         return json.load(metadata_file)
 
 
-def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentile_high=99.9, use_down_sample=False):
+def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentile_high=99.9, use_down_sample=False, *, output_path=None):
     """
     Applies alignment transformations to a set of images and saves the result as a Zarr array.
 
@@ -55,6 +55,11 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
         Upper percentile for contrast stretching (default: 99.9).
     use_down_sample : bool, optional
         If True, applies downsampling during processing for visualization (default: False).
+    output_path : str or Path, optional
+        Destination for the aligned Zarr. Its parent directory must exist.
+        When omitted, the existing destination beside the input TIFFs is used.
+        An existing Zarr array at the selected destination is replaced. Other
+        existing paths and directories containing input TIFFs are rejected.
 
     Returns:
     -------
@@ -68,6 +73,7 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
     - If `use_down_sample` is False, full-resolution images are processed.
     - The function ensures that all images fit within the same global coordinate system.
     - Intensity rescaling improves visualization and prevents artifacts due to saturated pixel values.
+    - The aligned Zarr uses (z, y, x) axis order.
     """
     # Ensure input is a Pandas DataFrame
     if not isinstance(alignment_df, pd.DataFrame):
@@ -123,7 +129,7 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
     y0_min = min(y0_values) - buffer_pixels
     y1_max = max(y1_values) + buffer_pixels
 
-    alignment_metadata = {"axes": "YXZ",
+    alignment_metadata = {"axes": "ZYX",
                           "coordinate_convention": "row_vectors",
                           "source_coordinates": "original_stitched_tiff_pixels",
                           "target_coordinates": "aligned_zarr_pixels",
@@ -140,41 +146,48 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
 
     y_shape = y1_max - y0_min
     x_shape = x1_max - x0_min
-    print(f"shape of the zarr array to create: {y_shape, x_shape, n_z}")
+    print(f"shape of the zarr array to create: {n_z, y_shape, x_shape}")
 
     path_0 = alignment_df["reference_path"][0]
     # Open the TIFF file and read the dtype without loading image data
     with tiff.TiffFile(path_0) as tif:
         original_image_dtype = tif.pages[0].dtype  # Get dtype of the first image page
 
-    z0_path = path_0.parent.joinpath(f"{path_0.parent.name}.zarr")
+    z0_path = (Path(output_path) if output_path is not None
+               else path_0.parent.joinpath(f"{path_0.parent.name}.zarr"))
 
     print(f"creating zarr at: {z0_path}")
+
+    if output_path is not None and z0_path.exists():
+        resolved_output = z0_path.resolve()
+        input_paths = list(alignment_df["moving_path"]) + list(alignment_df["reference_path"])
+        if any(Path(path).resolve().is_relative_to(resolved_output) for path in input_paths):
+            raise ValueError(f"Output path contains an input TIFF: {z0_path}")
+
+        is_zarr_array = z0_path.is_dir() and (z0_path / ".zarray").is_file()
+        zarr_v3_metadata = z0_path / "zarr.json"
+        if not is_zarr_array and z0_path.is_dir() and zarr_v3_metadata.is_file():
+            with zarr_v3_metadata.open(encoding="utf-8") as metadata_file:
+                is_zarr_array = json.load(metadata_file).get("node_type") == "array"
+        if not is_zarr_array:
+            raise ValueError(f"Existing output path is not a Zarr array: {z0_path}")
 
     if z0_path.exists():
         rm_tree(z0_path)
 
-    # Zarr v2 code (commented out)
-    # store = zarr.DirectoryStore(z0_path)
-    # chunk_size = 1024
-    # #print(f'Chunk size: {chunk_size},{chunk_size},1')
-    # # I will keep the z, y, x arrangement
-    # z = zarr.creation.open_array(store=store, mode='a', shape=(y_shape, x_shape, n_z), chunks=(chunk_size,chunk_size,1), dtype=original_image_dtype)
-
-    # Zarr v3 code
     store = zarr.storage.LocalStore(z0_path)
     chunk_size = 1024
     # mode="a" allows appending to the array if it already exists, or creating it if it doesn't. If overwriting is desired, you can use mode "w" instead.
     z = zarr.open_array(
         store=store,
         mode="a",
-        shape=(y_shape, x_shape, n_z),
-        chunks=(chunk_size, chunk_size, 1),
+        shape=(n_z, y_shape, x_shape),
+        chunks=(1, chunk_size, chunk_size),
         dtype=original_image_dtype,
         zarr_format=2,
     )
 
-    for idx in range(z.shape[2]):
+    for idx in range(z.shape[0]):
         current_tif_path = alignment_df['moving_path'][idx]
         with tiff.TiffFile(current_tif_path) as tif:
             img_idx = tif.asarray()
@@ -239,7 +252,7 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
                                                   "stitching_metadata": stitching_metadata
                                                   }
 
-        z[ty0:ty1,tx0:tx1, idx] = img_rescale[iy0:iy1,ix0:ix1]
+        z[idx, ty0:ty1, tx0:tx1] = img_rescale[iy0:iy1, ix0:ix1]
         print(f"Done for idx {idx}")
 
         metadata_path = z0_path.with_suffix(".json")
@@ -255,7 +268,8 @@ def zarr_array_to_czi(zarr_path, pixel_size, end_str):
     Converts a Zarr array into a CZI file.
 
     This function reads a Zarr array, extracts its image data, and saves it
-    as a `.czi` file while preserving pixel size information.
+    as a `.czi` file while preserving pixel size information. The array's
+    ``AtlasMetadata["axes"]`` must declare either ``ZYX`` or ``YXZ``.
 
     Parameters:
     ----------
@@ -279,7 +293,7 @@ def zarr_array_to_czi(zarr_path, pixel_size, end_str):
     AssertionError
         If the pixel size unit is not microns.
     ValueError
-        If the Zarr array has an unexpected shape.
+        If the Zarr array has an unexpected shape or missing or unsupported axes.
     """
     assert isinstance(zarr_path, PurePath), "zarr_path must be a Path object"
     assert isinstance(pixel_size, dict), "pixel_size must be a dictionary"
@@ -292,20 +306,25 @@ def zarr_array_to_czi(zarr_path, pixel_size, end_str):
     
     zarr_array = zarr.open_array(zarr_path, mode="r")  # Open as a Zarr array
 
-    atlas_metadata = zarr_array.attrs["AtlasMetadata"]
-    atlas_metadata_json = json.dumps(atlas_metadata)
-
-    if len(zarr_array.shape) < 3:
+    if len(zarr_array.shape) != 3:
         raise ValueError(f"Expected a 3D Zarr array, got shape {zarr_array.shape}")
+    atlas_metadata = zarr_array.attrs.get("AtlasMetadata")
+    if not isinstance(atlas_metadata, dict):
+        raise ValueError("Zarr array is missing AtlasMetadata with an axes declaration")
+    axes = atlas_metadata.get("axes")
+    if axes not in ("ZYX", "YXZ"):
+        raise ValueError(f"Expected Zarr axes 'ZYX' or 'YXZ', got {axes!r}")
+    atlas_metadata_json = json.dumps(atlas_metadata)
     
     newczi = zarr_path.parent.joinpath(f"{zarr_path.parent.name}{end_str}.czi")
     print(f"Saving CZI file to: {newczi}")
     
     with pyczi.create_czi(newczi, exist_ok=True) as czidoc_w:
         # Loop over Z-planes and channels
-        for frame in range(zarr_array.shape[2]):
+        z_axis = 0 if axes == "ZYX" else 2
+        for frame in range(zarr_array.shape[z_axis]):
             print(f"Processing frame {frame}")
-            tmp_plane = zarr_array[:, :, frame].squeeze()
+            tmp_plane = zarr_array[frame, :, :] if axes == "ZYX" else zarr_array[:, :, frame]
             czidoc_w.write(data=tmp_plane[..., np.newaxis], plane={"Z": frame})
         
         # Write metadata
