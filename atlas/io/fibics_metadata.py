@@ -6,6 +6,25 @@ import xmltodict
 import tifffile as tiff
 from pathlib import Path, PureWindowsPath, PurePosixPath, PurePath
 import numpy as np
+import warnings
+
+
+def get_stitched_pixel_size_microns(tif_path):
+    """Read the stitched TIFF's acquisition pixel size in microns."""
+    with tiff.TiffFile(tif_path) as tif:
+        try:
+            metadata = tif.shaped_metadata[0]["AcquisitionMetadata"]
+            value = float(metadata["Pixel size"])
+            unit = metadata["Pixel size unit"].strip().lower()
+        except (TypeError, IndexError, KeyError, AttributeError, ValueError) as exc:
+            raise ValueError(f"Missing or invalid pixel-size metadata in {tif_path}") from exc
+
+    factors = {"nm": 0.001, "µm": 1.0, "μm": 1.0, "um": 1.0, "mm": 1000.0, "m": 1_000_000.0}
+    if unit not in factors:
+        raise ValueError(f"Unsupported pixel-size unit {unit!r} in {tif_path}")
+    if not np.isfinite(value) or value <= 0:
+        raise ValueError(f"Pixel size must be positive and finite in {tif_path}")
+    return value * factors[unit]
 
 def extract_tif_metadata(tif_path):
     """
@@ -43,6 +62,44 @@ def extract_tif_metadata(tif_path):
         metadata_dict['FibicsDict'] = {}  
     
     return metadata_dict
+
+
+def get_fibics_tif_scan_pixel_size(tif_path):
+    """Return scan vectors and their magnitudes from a raw FIBICS TIFF.
+
+    FIBICS Ux/Uy and Vx/Vy contain no explicit units in the examples examined;
+    this uses the existing stitching code's assumption that they are microns.
+    Vector components retain their signs. X and Y sizes are vector magnitudes.
+    """
+    tif_path = Path(tif_path)
+    try:
+        scan = extract_tif_metadata(tif_path)["FibicsDict"]["Scan"]
+        ux, uy, vx, vy = (float(scan[key]) for key in ("Ux", "Uy", "Vx", "Vy"))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"Missing or invalid FIBICS scan vectors in {tif_path}") from exc
+    if not np.isfinite([ux, uy, vx, vy]).all():
+        raise ValueError(f"Non-finite FIBICS scan vectors in {tif_path}")
+    return {
+        "u_vector": [ux, uy], "v_vector": [vx, vy],
+        "pixel_size_x": float(np.hypot(ux, uy)),
+        "pixel_size_y": float(np.hypot(vx, vy)),
+        "unit": "µm", "unit_source": "assumed by existing stitching code",
+    }
+
+
+def get_fibics_mif_pixel_size(mif_path):
+    """Return the scalar pixel size and its unit as recorded in a .ve-mif."""
+    mif_path = Path(mif_path)
+    with mif_path.open(encoding="utf-8") as f:
+        metadata = xmltodict.parse(f.read())
+    try:
+        pixel = metadata["MosaicInfo"]["PixelSize"]
+        value, unit = float(pixel["#text"]), pixel["@unit"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"Missing or invalid MIF pixel size in {mif_path}") from exc
+    if not np.isfinite(value) or value <= 0 or not isinstance(unit, str) or not unit.strip():
+        raise ValueError(f"Invalid MIF pixel size or unit in {mif_path}")
+    return {"pixel_size": value, "unit": unit}
 
 def filename_helper(path_to_file: str | PurePath) -> PurePath:
 
@@ -306,6 +363,32 @@ def get_metadata_for_stitched_tif(mif_file: PurePath):
 
     metadict["Pixel size"] = float(mif_dict['MosaicInfo']['PixelSize']['#text'])
     metadict['Pixel size unit'] = mif_dict['MosaicInfo']['PixelSize']['@unit']
+    metadict["Pixel size MIF"] = metadict["Pixel size"]
+    metadict["Pixel size MIF unit"] = metadict["Pixel size unit"]
+
+    # Keep each tile's scan vectors so differences between tiles remain visible.
+    tiles = mif_dict['MosaicInfo']['Tiles']['Tile']
+    if isinstance(tiles, dict):
+        tiles = [tiles]
+    tile_calibrations = []
+    for tile in tiles:
+        filename = tile.get("Filename")
+        entry = {"filename": filename_helper(filename) if filename else None}
+        try:
+            if not filename:
+                raise ValueError("Tile filename is missing from MIF metadata")
+            entry.update(get_fibics_tif_scan_pixel_size(Path(mif_file).parent / entry["filename"]))
+        except (AssertionError, OSError, ValueError) as exc:
+            entry["error"] = str(exc)
+            warnings.warn(f"Could not read tile pixel size for {filename}: {exc}", stacklevel=2)
+        tile_calibrations.append(entry)
+    metadict["Pixel size tile TIFF per tile"] = tile_calibrations
+    # The first listed tile is the representative value; all tile values
+    # remain available above. Missing metadata must not prevent stitching.
+    representative = tile_calibrations[0] if tile_calibrations else {}
+    for axis in ("X", "Y"):
+        metadict[f"Pixel size tile TIFF {axis}"] = representative.get(f"pixel_size_{axis.lower()}")
+        metadict[f"Pixel size tile TIFF {axis} unit"] = representative.get("unit")
 
     dwell_unit = mif_dict['MosaicInfo']['DwellTime']['@unit']
     if dwell_unit.lower() == 'ns':
