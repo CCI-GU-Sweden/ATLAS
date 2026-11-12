@@ -1,3 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Event
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -95,3 +98,131 @@ def test_invalid_inputs_do_not_reserve_section(tmp_path):
     with pytest.raises(TypeError):
         store.write_section(atlas_section_number=2, image=image, acquisition_metadata={"bad": object()})
     assert list(store.sections.group_keys()) == []
+
+
+def test_parallel_writer_keeps_reserved_order_when_workers_finish_out_of_order(tmp_path):
+    store = StitchedZarrStore.open(tmp_path / "parallel.zarr", chunk_yx=(4, 4))
+    section_order = [7, 1, 3]
+    images = {
+        7: np.full((3, 5), 77, dtype=np.uint16),
+        1: np.arange(14, dtype=np.uint16).reshape(7, 2),
+        3: np.full((2, 9), 33, dtype=np.uint16),
+    }
+    ready = Barrier(3)
+    first_written = Event()
+    second_written = Event()
+
+    def write_from_worker(number):
+        ready.wait(timeout=10)
+        if number == 3:
+            assert first_written.wait(timeout=10)
+        elif number == 7:
+            assert second_written.wait(timeout=10)
+
+        z_index = writer.write_section(
+            atlas_section_number=number,
+            image=images[number],
+            acquisition_metadata={"atlas_section_number": number},
+            source_folder=f"S_{number}",
+        )
+        if number == 1:
+            first_written.set()
+        elif number == 3:
+            second_written.set()
+        return number, z_index
+
+    with store.parallel_writer(section_order) as writer:
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(write_from_worker, number) for number in section_order]
+            results = [future.result(timeout=20) for future in futures]
+
+    assert writer.z_indices == {7: 0, 1: 1, 3: 2}
+    assert results == [(7, 0), (1, 1), (3, 2)]
+    assert store.group["images"].shape == (3, 7, 9)
+    for number, image in images.items():
+        np.testing.assert_array_equal(store.read_section(number), image)
+        record = dict(store.sections[f"S_{number}"].attrs)
+        assert record["z_index"] == writer.z_indices[number]
+        assert record["acquisition_metadata"]["atlas_section_number"] == number
+
+
+def test_parallel_writer_persists_reservations_for_retry(tmp_path):
+    path = tmp_path / "retry_parallel.zarr"
+    store = StitchedZarrStore.open(path, chunk_yx=(4, 4))
+    images = {
+        2: np.full((2, 3), 22, dtype=np.uint16),
+        5: np.full((5, 4), 55, dtype=np.uint16),
+    }
+
+    with pytest.raises(RuntimeError, match="not written"):
+        with store.parallel_writer([2, 5]) as writer:
+            writer.write_section(
+                atlas_section_number=2,
+                image=images[2],
+                acquisition_metadata={"atlas_section_number": 2},
+                source_folder="S_2",
+            )
+
+    assert store.sections["S_2"].attrs["status"] == "complete"
+    assert store.sections["S_5"].attrs["status"] == "reserved"
+
+    reopened = StitchedZarrStore.open(path)
+    with reopened.parallel_writer([2, 5]) as writer:
+        assert writer.is_complete(2)
+        assert writer.z_indices == {2: 0, 5: 1}
+        writer.write_section(
+            atlas_section_number=5,
+            image=images[5],
+            acquisition_metadata={"atlas_section_number": 5},
+            source_folder="S_5",
+        )
+
+    np.testing.assert_array_equal(reopened.read_section(2), images[2])
+    np.testing.assert_array_equal(reopened.read_section(5), images[5])
+
+
+def test_parallel_writer_can_record_a_worker_failure_and_retry_it(tmp_path):
+    path = tmp_path / "failed_parallel.zarr"
+    store = StitchedZarrStore.open(path, chunk_yx=(4, 4))
+    image = np.full((3, 5), 17, dtype=np.uint16)
+    with store.parallel_writer([4]) as writer:
+        writer.mark_failed(4, RuntimeError("simulated stitch failure"))
+        assert writer.failed_sections == {4: "simulated stitch failure"}
+
+    record = dict(store.sections["S_4"].attrs)
+    assert record["status"] == "reserved"
+    assert record["last_error"] == "simulated stitch failure"
+
+    reopened = StitchedZarrStore.open(path)
+    with reopened.parallel_writer([4]) as writer:
+        assert not writer.is_complete(4)
+        writer.write_section(
+            atlas_section_number=4,
+            image=image,
+            acquisition_metadata={"atlas_section_number": 4},
+            source_folder="S_4",
+        )
+
+    record = dict(reopened.sections["S_4"].attrs)
+    assert record["status"] == "complete"
+    assert "last_error" not in record
+    np.testing.assert_array_equal(reopened.read_section(4), image)
+
+
+def test_parallel_writer_rejects_duplicate_and_unreserved_sections(tmp_path):
+    store = StitchedZarrStore.open(tmp_path / "invalid_parallel.zarr")
+    with pytest.raises(ValueError, match="duplicates"):
+        store.parallel_writer([1, 1])
+
+    with store.parallel_writer([1]) as writer:
+        with pytest.raises(ValueError, match="not reserved"):
+            writer.write_section(
+                atlas_section_number=2,
+                image=np.ones((2, 2), dtype=np.uint16),
+                acquisition_metadata={},
+            )
+        writer.write_section(
+            atlas_section_number=1,
+            image=np.ones((2, 2), dtype=np.uint16),
+            acquisition_metadata={"atlas_section_number": 1},
+        )
