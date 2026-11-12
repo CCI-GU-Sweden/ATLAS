@@ -15,6 +15,22 @@ from skimage.transform import downscale_local_mean
 from atlas.image_analysis import rescale_image_intensity
 from atlas.alignment import ROI
 
+
+def _load_stitching_metadata(tif_path, tiff_metadata):
+    """Read stitching metadata from a TIFF description or its JSON sidecar."""
+    if "stitching_metadata" in tiff_metadata:
+        return tiff_metadata["stitching_metadata"]
+
+    tif_path = Path(tif_path)
+    metadata_path = tif_path.with_name(tif_path.stem + "_metadata.json")
+    if not metadata_path.is_file():
+        raise FileNotFoundError(
+            f"No stitching metadata in {tif_path} or its sidecar {metadata_path}"
+        )
+    with metadata_path.open(encoding="utf-8") as metadata_file:
+        return json.load(metadata_file)
+
+
 def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentile_high=99.9, use_down_sample=False):
     """
     Applies alignment transformations to a set of images and saves the result as a Zarr array.
@@ -165,7 +181,7 @@ def apply_alignment(alignment_df, buffer_pixels=20, percentile_low=.5, percentil
 
             tiff_metadata = json.loads(tif.pages[0].description)
 
-        stitching_metadata = tiff_metadata["stitching_metadata"]
+        stitching_metadata = _load_stitching_metadata(current_tif_path, tiff_metadata)
 
         if use_down_sample:
             down_scale = alignment_df['down_scale'][idx]

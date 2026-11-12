@@ -471,10 +471,10 @@ def pairwise_alignment(alignment_df):
         #print(f"Processing alignment: ref -> {ref_path.name}, moving -> {mov_path.name}")
 
         # ✅ Compute translation shift
-            ref_ROI, mov_ROI, current_shift = align_image_pair(reference_path=row["reference_path"],
-                                                               moving_path=row["moving_path"],
-                                                               down_scale=down_scale
-                                                               )
+        ref_ROI, mov_ROI, current_shift = align_image_pair(reference_path=row["reference_path"],
+                                                           moving_path=row["moving_path"],
+                                                           down_scale=down_scale
+                                                           )
 
 
         # ✅ Update the DataFrame correctly
