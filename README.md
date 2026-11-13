@@ -7,9 +7,11 @@ between consecutive sections to produce a roughly aligned 3D stack. The current
 notebook workflow stores stitched sections and their metadata in a master Zarr,
 creates an aligned Zarr, and can export the result as CZI.
 
-The master-Zarr workflow is experimental. The existing TIFF-based alignment
-functions remain available; the Napari plugin still uses that TIFF-based path
-and will be updated separately.
+The master-Zarr workflow is the preferred path forward and is still under active
+development. The existing TIFF-based alignment functions remain available during
+the transition, with the intention of phasing them out once downstream workflows
+have moved to Zarr. The Napari plugin still uses the TIFF-based path and will be
+updated separately.
 
 ## Install
 
