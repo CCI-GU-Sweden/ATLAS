@@ -101,6 +101,29 @@ def get_fibics_mif_pixel_size(mif_path):
         raise ValueError(f"Invalid MIF pixel size or unit in {mif_path}")
     return {"pixel_size": value, "unit": unit}
 
+
+def get_s_number_from_mif(mif_path):
+    """Extract the section number from the MIF's recorded section folder.
+
+    The MIF examples record a ``MosaicInfo/Folder`` path rather than a
+    separate numeric section field. The path may use Windows or POSIX syntax,
+    regardless of the platform reading it. Tile filenames are not consulted.
+    """
+    from .utils import extract_s_number
+
+    mif_path = Path(mif_path)
+    with mif_path.open(encoding="utf-8") as f:
+        metadata = xmltodict.parse(f.read())
+    try:
+        folder = metadata["MosaicInfo"]["Folder"]
+        folder_name = filename_helper(folder)
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f"Missing MIF section folder in {mif_path}") from exc
+    number = extract_s_number(folder_name)
+    if number is None:
+        raise ValueError(f"No S number in MIF section folder {folder!r}")
+    return number
+
 def filename_helper(path_to_file: str | PurePath) -> PurePath:
 
     """
@@ -341,7 +364,9 @@ def get_metadata_for_stitched_tif(mif_file: PurePath):
     Returns:
     -------
     metadict : dict
-                A dictionary with acquisition metadata to be included with the stitched tif
+                A dictionary with acquisition metadata for the stitched image.
+                ``atlas_source_folder_name`` records the name of the folder
+                containing the MIF used during stitching.
     """
 
     import re
@@ -352,6 +377,8 @@ def get_metadata_for_stitched_tif(mif_file: PurePath):
     import re
     metadict = {}
 
+    metadict['atlas_section_number'] = get_s_number_from_mif(mif_file)
+    metadict['atlas_source_folder_name'] = Path(mif_file).parent.name
     metadict['Acquisition date'], _ = mif_dict['MosaicInfo']['Date'].split('T')
     metadict['Protocol name'] = mif_dict['MosaicInfo']['SetupInfo']['SetupFilename']
 

@@ -8,8 +8,10 @@ from .utils import initialize_alignment_df, initialize_alignment_df_points, pair
 from .utils import get_matched_points_by_quadrant, estimate_alignment_transform, print_similarity_parameters
 from .utils import compute_cumulative_transforms, compute_canvas_from_df
 
+from .stitched_zarr import initialize_zarr_alignment_df, pairwise_zarr_alignment
+
 __all__ = ["ROI", "first_last_true", "check_roi_limits", "get_translation",
            "calculate_cumulative_shifts", "initialize_alignment_df", "initialize_alignment_df_points",
              "correct_z_alignment_from_points",
              "pairwise_alignment", "get_matched_points_by_quadrant", "estimate_alignment_transform",
-             "print_similarity_parameters", "compute_cumulative_transforms", "compute_canvas_from_df"]
+             "print_similarity_parameters", "compute_cumulative_transforms", "compute_canvas_from_df", "initialize_zarr_alignment_df", "pairwise_zarr_alignment"]

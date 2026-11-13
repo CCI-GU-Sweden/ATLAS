@@ -2,25 +2,16 @@
 
 Utilities for processing SEM image data exported from ATLAS/FIBICS projects.
 
-The package currently focuses on turning an ATLAS project into stitched 2D
-planes, then roughly aligning those planes into a 3D stack. It provides helpers
-to:
+ATLAS stitches the tiles in each acquired section, then estimates translations
+between consecutive sections to produce a roughly aligned 3D stack. The current
+notebook workflow stores stitched sections and their metadata in a master Zarr,
+creates an aligned Zarr, and can export the result as CZI.
 
-- read ATLAS mosaic metadata (`.mif`) and per-tile TIFF metadata;
-- reconstruct one stitched 2D image per acquisition plane;
-- estimate rough pairwise z-alignment between stitched planes;
-- apply the cumulative alignment into a Zarr array;
-- export the aligned Zarr stack back to a CZI file.
-
-The stitching code uses tile positions, scan rotation, acquisition order, image
-size, and pixel size from the ATLAS/FIBICS metadata. ATLAS records when tile
-acquisition is finished, so dynamic/incremental processing should be possible in
-principle.
-
-## Status
-
-This is early packaging work. The rough stitching and z-alignment utilities are
-being moved from notebooks/scripts into an installable package.
+The master-Zarr workflow is the preferred path forward and is still under active
+development. The existing TIFF-based alignment functions remain available during
+the transition, with the intention of phasing them out once downstream workflows
+have moved to Zarr. The Napari plugin still uses the TIFF-based path and will be
+updated separately.
 
 ## Install
 
@@ -45,23 +36,75 @@ as:
 import atlas
 ```
 
-## Minimal Workflow
+## Notebook workflow
 
-At a high level, the intended workflow is:
+From a local checkout, open the notebooks with the `atlas-env` Jupyter kernel.
+If the kernel is not listed, register it once from the activated environment:
 
-1. Parse an ATLAS mosaic project and build a tile dataframe.
-2. Stitch tiles into one 2D plane.
-3. Repeat for the planes in the project.
-4. Run rough z-alignment across the stitched planes.
-5. Save the aligned stack as Zarr.
-6. Optionally export the Zarr stack as CZI.
+```bash
+python -m ipykernel install --user --name atlas-env --display-name "Python ATLAS-env"
+```
 
-The public API is still being shaped, so consult the modules directly for now:
+1. **Stitch sections:** open [ATLAS-raw-import.ipynb](ATLAS-raw-import.ipynb),
+   set `series_folder` to the section set containing the `S_...` folders,
+   and run the notebook. It writes `stitched_sections.zarr` beside those
+   folders. Completed sections already in the store are skipped.
+2. **Align sections:** open [ATLAS-z-align-zarr.ipynb](ATLAS-z-align-zarr.ipynb),
+   set the same `series_folder` and the axial spacing in microns, then run the
+   pairwise alignment and create a downsampled preview. Inspect the preview
+   before applying optional manual landmark corrections and exporting the
+   full-resolution aligned Zarr or CZI.
+3. **Fine alignment:** create a WEBKNOSSOS dataset using the existing helpers
+   and use the project's fine-alignment workflow as needed.
 
-- `atlas.stitching`
-- `atlas.alignment`
-- `atlas.io`
-- `atlas.image_analysis`
+The raw import uses cross-correlation to refine overlapping tiles, crops to the
+valid stitched region, and stores the oriented result. The master store keeps
+one shared `images` array in **ZYX** order. Each `sections/S_<number>` record
+contains the ATLAS section number, its separate Z index, original shape,
+acquisition and stitching metadata, transforms, source folder, and tile table.
+S numbers can be missing and need not match Z indices. Alignment uses numeric
+S order by default, or `correct_order.txt` in the section-set folder if present.
+
+The aligned Zarr is a separate ZYX array. Its `AtlasMetadata` includes the
+stitching and alignment transforms, acquisition metadata, and references back to
+the master store. The backend CZI exporter carries this metadata as a custom
+attribute. The aligned writer replaces an existing aligned array at its chosen
+output path; the master store is protected from being used as that destination.
+
+Other notebooks:
+
+- [ATLAS-stage-import.ipynb](ATLAS-stage-import.ipynb): stage-only TIFF
+  stitching, without cross-correlation or valid-area cropping.
+- [ATLAS-z-align.ipynb](ATLAS-z-align.ipynb): the earlier TIFF-based alignment
+  workflow.
+- [ATLAS-raw-import-parallel.ipynb](ATLAS-raw-import-parallel.ipynb): an
+  experimental parallel stitching and TIFF comparison notebook.
+
+## Using the stitched Zarr from Python
+
+```python
+from pathlib import Path
+from atlas.io import StitchedZarrStore
+
+series_folder = Path("/path/to/section-set")
+store = StitchedZarrStore.open(series_folder / "stitched_sections.zarr")
+
+# S numbers identify sections independently of their position in the array.
+section = store.read_section(2)  # Original stitched shape, without padding.
+record = dict(store.sections["S_2"].attrs)
+print(record["z_index"], record["acquisition_metadata"])
+print(record["acquisition_metadata"]["atlas_source_folder_name"])
+
+# Respect correct_order.txt if available; otherwise use numeric S order.
+section_order = store.ordered_sections(order_path=series_folder / "correct_order.txt")
+```
+
+For alignment, `atlas.alignment` provides `initialize_zarr_alignment_df`,
+`pairwise_zarr_alignment`, and `calculate_cumulative_shifts`.
+`atlas.io.apply_alignment_zarr` writes a separate aligned array. The Zarr
+notebook shows these calls and the manual correction workflow in context.
+The master and aligned arrays use Zarr format 2; they are not OME-Zarr
+pyramids. OME-Zarr compatibility and Zarr v3 are tracked separately in #28.
 
 ## Stage-only stitching
 
