@@ -364,7 +364,9 @@ def get_metadata_for_stitched_tif(mif_file: PurePath):
     Returns:
     -------
     metadict : dict
-                A dictionary with acquisition metadata to be included with the stitched tif
+                A dictionary with acquisition metadata for the stitched image.
+                ``atlas_source_folder_name`` records the name of the folder
+                containing the MIF used during stitching.
     """
 
     import re
@@ -376,6 +378,7 @@ def get_metadata_for_stitched_tif(mif_file: PurePath):
     metadict = {}
 
     metadict['atlas_section_number'] = get_s_number_from_mif(mif_file)
+    metadict['atlas_source_folder_name'] = Path(mif_file).parent.name
     metadict['Acquisition date'], _ = mif_dict['MosaicInfo']['Date'].split('T')
     metadict['Protocol name'] = mif_dict['MosaicInfo']['SetupInfo']['SetupFilename']
 

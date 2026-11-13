@@ -5,5 +5,7 @@ from .utils import is_there_a_single_tif, extract_s_number, create_empty_folder,
 from .fibics_metadata import extract_tif_metadata, get_pixel_size_from_tif, get_image_size_from_tif, get_valid_slice_folders, filename_helper, get_metadata_for_stitched_tif, get_s_number_from_mif
 from .stitched_zarr import StitchedZarrStore
 
+from .aligned_zarr import apply_alignment_zarr
+
 __all__ = ["is_there_a_single_tif", "extract_s_number", "extract_tif_metadata", "get_pixel_size_from_tif", "create_empty_folder", "get_valid_slice_folders", "filename_helper",
-           "get_metadata_for_stitched_tif", "get_s_number_from_mif", "StitchedZarrStore", "rm_tree", "zarr_array_to_czi", "apply_alignment", "get_image_size_from_tif", "reorder_files_by_s_number", "parse_shorthand_order"]
+           "get_metadata_for_stitched_tif", "get_s_number_from_mif", "StitchedZarrStore", "rm_tree", "zarr_array_to_czi", "apply_alignment", "get_image_size_from_tif", "reorder_files_by_s_number", "parse_shorthand_order", "apply_alignment_zarr"]

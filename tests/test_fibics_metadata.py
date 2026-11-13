@@ -87,6 +87,7 @@ def test_stitched_metadata_single_and_multiple_detector_items(
     result = get_metadata_for_stitched_tif(path)
 
     assert result["atlas_section_number"] == 3
+    assert result["atlas_source_folder_name"] == tmp_path.name
     assert result["Detector"] == detector
     assert result["BSD Gain"] == expected_gain
     assert result["Tile arrangement"] == "R2C2"

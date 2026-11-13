@@ -9,6 +9,8 @@ import pandas as pd
 import zarr
 from numcodecs import Blosc
 
+from .utils import parse_shorthand_order
+
 
 class StitchedZarrStore:
     """Store stitched sections and their metadata in one local Zarr group.
@@ -193,6 +195,138 @@ class StitchedZarrStore:
         images[z_index, :height, :width] = image
         section.attrs["status"] = "complete"
         return z_index
+
+    def validate_section_pixel_sizes(self, tolerance_percent=1.0):
+        """Check that each pixel-size source is consistent across completed sections.
+
+        The stored acquisition ``Pixel size`` and tile-TIFF X/Y sizes are checked
+        separately because they come from different metadata fields. Values are
+        converted to microns, then compared with the median for that field.
+        Missing or incomplete metadata, or a deviation above the tolerance, raises
+        a clear error. Returns a summary in microns, including the first section
+        in numeric ATLAS section order and the maximum deviation from the median.
+        """
+        section_records = sorted(
+            (dict(self.sections[key].attrs) for key in self.sections.group_keys()
+             if self.sections[key].attrs.get("status") == "complete"),
+            key=lambda record: record["atlas_section_number"],
+        )
+        if not section_records:
+            raise ValueError("No completed sections available for pixel-size validation")
+
+        if not np.isfinite(tolerance_percent) or tolerance_percent < 0:
+            raise ValueError("tolerance_percent must be a finite, nonnegative number")
+
+        unit_to_microns = {
+            "nm": 0.001,
+            "µm": 1.0,
+            "μm": 1.0,
+            "um": 1.0,
+            "mm": 1000.0,
+            "m": 1_000_000.0,
+        }
+        fields = [
+            ("Acquisition Pixel size", "Pixel size", "Pixel size unit", True),
+            ("Tile TIFF X", "Pixel size tile TIFF X", "Pixel size tile TIFF X unit", False),
+            ("Tile TIFF Y", "Pixel size tile TIFF Y", "Pixel size tile TIFF Y unit", False),
+        ]
+        summary = {}
+
+        for label, value_key, unit_key, required in fields:
+            measurements = []
+            missing = []
+            for record in section_records:
+                section_number = record["atlas_section_number"]
+                metadata = record.get("acquisition_metadata", {})
+                value = metadata.get(value_key)
+                unit = metadata.get(unit_key)
+                if value is None and unit is None:
+                    missing.append(section_number)
+                    continue
+                if value is None or unit is None:
+                    raise ValueError(f"Incomplete {label} pixel-size metadata for S_{section_number}")
+
+                value = float(value)
+                unit = str(unit).strip().lower()
+                if unit not in unit_to_microns or not np.isfinite(value) or value <= 0:
+                    raise ValueError(f"Invalid {label} pixel size for S_{section_number}: {value} {unit}")
+                measurements.append((section_number, value * unit_to_microns[unit]))
+
+            if not measurements and not required:
+                print(f"No {label} pixel-size metadata found; skipping this check.")
+                continue
+            if missing:
+                raise ValueError(f"{label} pixel-size metadata is missing for sections {missing}")
+
+            values = np.array([value for _, value in measurements], dtype=float)
+            median_um = float(np.median(values))
+            deviations = np.abs(values - median_um) / median_um * 100
+            max_deviation = float(deviations.max())
+            print(
+                f"{label}: median={median_um:.12g} µm, "
+                f"maximum deviation={max_deviation:.4g}% "
+                f"(allowed {tolerance_percent:g}%)"
+            )
+            if max_deviation > tolerance_percent:
+                outliers = [
+                    f"S_{number}={value:.12g} µm"
+                    for (number, value), deviation in zip(measurements, deviations)
+                    if deviation > tolerance_percent
+                ]
+                raise ValueError(
+                    f"{label} pixel sizes vary by more than {tolerance_percent:g}%: "
+                    + ", ".join(outliers)
+                )
+            summary[label] = {
+                "first_um": measurements[0][1],
+                "median_um": median_um,
+                "max_deviation_percent": max_deviation,
+            }
+
+        return summary
+
+
+    def ordered_sections(self, order_path=None):
+        """Return completed sections in alignment order with their Z indices.
+
+        Sections default to numeric ATLAS section order. If ``order_path``
+        points to an existing shorthand order file, its section numbers define
+        the order and may select a subset. Each returned dictionary contains
+        ``atlas_section_number`` and ``z_index``. Gaps are reported but allowed;
+        requested missing or incomplete sections raise ``ValueError``.
+        """
+        sections = {}
+        for key in self.sections.group_keys():
+            record = self.sections[key].attrs
+            if record.get("status") == "complete":
+                number = record["atlas_section_number"]
+                sections[number] = {
+                    "atlas_section_number": number,
+                    "z_index": record["z_index"],
+                }
+
+        if not sections:
+            raise ValueError("No completed sections found in the stitched Zarr store")
+
+        if order_path is not None and Path(order_path).is_file():
+            order = parse_shorthand_order(order_path)
+            missing = [number for number in order if number not in sections]
+            if missing:
+                raise ValueError(f"Sections in {order_path} are not complete or not present: {missing}")
+            if not order:
+                raise ValueError(f"Section order is empty: {order_path}")
+        else:
+            order = sorted(sections)
+            if order_path is not None:
+                print(f"No correct order file found at {order_path}; using numeric S order.")
+
+        sorted_numbers = sorted(set(order))
+        gaps = [(left, right) for left, right in zip(sorted_numbers, sorted_numbers[1:])
+                if right - left > 1]
+        if gaps:
+            print(f"Warning: gaps in selected ATLAS section numbers: {gaps}")
+
+        return [sections[number] for number in order]
 
     def read_section(self, atlas_section_number):
         """Return a completed section without shared-canvas padding."""
