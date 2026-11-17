@@ -23,7 +23,7 @@ distribution, then run the following in a terminal (on Windows, use a Conda
 terminal):
 
 ```bash
-conda create -n atlas-napari -c conda-forge python=3.11 napari pyqt
+conda create -n atlas-napari -c conda-forge python=3.11 napari "pyqt6>=6.7" pip
 conda activate atlas-napari
 python -m pip install napari-atlas-cci
 napari
@@ -32,6 +32,37 @@ napari
 In napari, open **Plugins → Atlas CCI → AtlasCCI**. To start it again later,
 activate the environment and run `napari`. For more ways to install napari, see
 the [napari installation guide](https://napari.org/stable/tutorials/fundamentals/installation.html).
+
+### Qt backend troubleshooting
+The plugin requires a compatible Qt backend. We recommend PyQt6 (Qt ≥6.7) for recent versions of napari.
+
+If napari reports an incompatible Qt binding, explicitly select PyQt6 when launching the application.
+
+Linux / WSL / macOS:
+```bash
+QT_API=pyqt6 napari
+```
+Windows (Anaconda Prompt / Command Prompt):
+```bash
+set QT_API=pyqt6
+napari
+```
+Windows (PowerShell):
+```bash
+$env:QT_API = "pyqt6"
+napari
+```
+
+### Known dependency conflicts
+The plugin uses webknossos to create and upload datasets to webKnossos.
+Currently, webknossos 4.3.3 specifies dependency versions that conflict
+with requirements of newer napari environments.
+
+Installation may therefore report conflicts involving psutil, rich,
+and typer.
+
+We have successfully tested dataset creation and upload using
+webknossos 4.3.3 with napari 0.10.0. This is a temporary compatibility workaround.
 
 ### Create a desktop launcher
 
