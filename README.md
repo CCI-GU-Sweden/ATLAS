@@ -159,9 +159,13 @@ in the selected section-set folder.
 
 For a watcher output copy without S folders, select the folder containing
 `stitched_sections.zarr`. Completed sections are available to select and display;
-click **Refresh** to discover newly completed sections. This view is read-only,
-and does not imply that the acquisition has finished. Stitching, alignment,
-and export controls are disabled in this mode.
+click **Refresh** to discover newly completed sections. **Initial Z Alignment**
+uses the completed sections to calculate shifts and generate a preview in the
+selected folder. If you import the watcher's alignment table, **Render and
+Preview** uses its saved shifts. Manual correction, final alignment, and export
+use the same controls as an acquisition folder. The available section count
+reflects the store at the last refresh, regardless of whether acquisition has
+finished.
 
 ![Initial status](assets/Unprocessed_folder.png)
 
