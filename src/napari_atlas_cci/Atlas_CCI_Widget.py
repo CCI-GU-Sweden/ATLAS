@@ -1,6 +1,8 @@
 import napari
 import re
 import textwrap
+import os
+import tempfile
 from queue import SimpleQueue, Empty
 from pathlib import Path
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -8,6 +10,7 @@ from typing import cast
 import tifffile as tiff
 import pandas as pd
 import numpy as np
+from napari.layers import Image
 from napari.utils.notifications import show_error
 from napari.utils.notifications import show_info
 from qtpy.QtCore import Qt, QTimer, QSettings
@@ -18,6 +21,7 @@ from qtpy.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -53,6 +57,11 @@ SERIES_STATUS_COLOR_ROLE = getattr(
 AXIAL_PIXEL_SIZE = 0.300
 AXIAL_PIXEL_SIZE_UNITS_OPTIONS = ["nm", "µm"]
 ZALIGN_STATUS_MAX_CHARS = 120
+ALIGNMENT_RESULTS_PATH = Path("alignment_results") / "z_alignment_results.pkl"
+
+def _preview_layer_name(root_folder: Path) -> str:
+    return f"{root_folder.name}_downsample"
+
 
 class AtlasCCIWidget(QWidget):
     def __init__(self, viewer: napari.Viewer):
@@ -76,6 +85,8 @@ class AtlasCCIWidget(QWidget):
         self._series_futures: dict[Path, Future] = {}
         self._stitch_events = SimpleQueue()
         self._master_sections_cache = None
+        self._watcher_mode = False
+        self._watcher_sections = {}
         self._processing_order: list[Path] = []
         self._next_queue_index = 0
         self._status_timer = QTimer(self)
@@ -113,6 +124,10 @@ class AtlasCCIWidget(QWidget):
         self.browse_btn = QPushButton("Browse...")
         self.browse_btn.clicked.connect(self.browse_for_atlas_project)
         self.path_layout.addWidget(self.browse_btn)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(lambda: self.refresh_local_folder_tree(allow_import=True))
+        self.refresh_btn.setVisible(False)
+        self.path_layout.addWidget(self.refresh_btn)
 
         self.options_button = QPushButton("Options...")
         self.options_button.clicked.connect(self.open_options_dialog)
@@ -264,6 +279,13 @@ class AtlasCCIWidget(QWidget):
         self.download_wkn_button.clicked.connect(self.download_from_webknossos)
         self.main_layout.addWidget(self.download_wkn_button)
 
+        layer_events = getattr(getattr(self.viewer, "layers", None), "events", None)
+        if layer_events is not None:
+            for name in ("inserted", "removed", "renamed"):
+                emitter = getattr(layer_events, name, None)
+                if emitter is not None:
+                    emitter.connect(self._update_correction_controls)
+
         self.refresh_local_folder_tree()
         if settings_error:
             show_error(settings_error)
@@ -273,25 +295,42 @@ class AtlasCCIWidget(QWidget):
         series_list, _ = get_valid_slice_folders(Path(path))
         return series_list
 
-    def refresh_local_folder_tree(self) -> None:
+    def refresh_local_folder_tree(self, *, allow_import: bool = False) -> None:
+        if self._is_processing or self._is_zalign_running() or self._is_export_running():
+            show_error("Wait for the current operation to finish before refreshing the project.")
+            return
         path_text = self.path_edit.text().strip()
         if not path_text:
             show_error("Please provide an atlas project folder path.")
-            self.local_folder_tree.clear()
+            self.path_edit.setText(str(self.main_directory))
             return
 
         project_root = Path(path_text).expanduser()
         if not project_root.exists() or not project_root.is_dir():
             show_error("Invalid path. Please provide an existing folder.")
-            self.local_folder_tree.clear()
+            self.path_edit.setText(str(self.main_directory))
             return
 
         try:
-            series_folders = self.search_for_atlas_project(project_root)
-        except OSError as exc:
+            from atlas.io import get_valid_slice_folders
+            valid, failed = get_valid_slice_folders(project_root)
+            # Failed records may omit the folder path; their presence still indicates raw data.
+            has_raw = bool(valid or failed)
+            watcher_mode = not has_raw and (project_root / "stitched_sections.zarr").is_dir()
+            records = self._read_watcher_sections(project_root) if watcher_mode else {}
+            series_folders = ([project_root / f"S_{n:04d}" for n in records]
+                              if watcher_mode else valid)
+        except Exception as exc:
             show_error(f"Could not read folder: {exc}")
-            self.local_folder_tree.clear()
+            self.path_edit.setText(str(self.main_directory))
             return
+
+        self.main_directory = project_root
+        self._watcher_mode = watcher_mode
+        self._watcher_sections = records
+        self.refresh_btn.setVisible(watcher_mode)
+        self.stitching_all_btn.setEnabled(not watcher_mode)
+        self.stitching_one_btn.setEnabled(not watcher_mode)
 
         # Reset transient runtime statuses on project reload.
         self.pending_series.clear()
@@ -300,8 +339,133 @@ class AtlasCCIWidget(QWidget):
 
         self.local_folder_tree.populate_from_project(project_root, series_folders)
         self.update_series_status_indicators(project_root)
+        if watcher_mode and allow_import:
+            self._offer_watcher_alignment_import(project_root)
+            self._update_project_leaf_and_zalign_controls(project_root)
+
+    def _offer_watcher_alignment_import(self, root_folder: Path) -> None:
+        source = root_folder / "z_alignment_results.pkl"
+        target = root_folder / ALIGNMENT_RESULTS_PATH
+        if not source.is_file() or target.exists():
+            return
+        answer = QMessageBox.question(
+            self, "Import watcher alignment",
+            "Import the watcher alignment results from this project?\n\n"
+            "Pickle files can execute arbitrary code when opened. Only import this "
+            "file if you trust its source:\n" + str(source),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._import_watcher_alignment(root_folder, source, target)
+        except Exception as exc:
+            show_error(f"Could not import watcher alignment results: {exc}")
+
+    def _import_watcher_alignment(self, root_folder: Path, source: Path, target: Path) -> None:
+        from atlas.alignment.utils import ROI
+
+        frame = pd.read_pickle(source)
+        required = {"store_path", "moving_section_number", "moving_z_index",
+                    "moving_ROI", "cumulative_ROI", "current_shift", "down_scale"}
+        if not isinstance(frame, pd.DataFrame) or frame.empty or not frame.columns.is_unique:
+            raise ValueError("Expected a nonempty alignment table with unique columns")
+        missing = required - set(frame.columns)
+        if missing:
+            raise ValueError(f"Missing alignment columns: {sorted(missing)}")
+        group = self._open_watcher_store(root_folder)
+        expected = {}
+        for key in group["sections"]:
+            attrs = group["sections"][key].attrs
+            if attrs.get("status") == "complete":
+                number = int(attrs["atlas_section_number"])
+                if number in expected:
+                    raise ValueError("Duplicate completed section in stitched store")
+                expected[number] = attrs["z_index"]
+        seen = set()
+        for _, row in frame.iterrows():
+            number, z_index = row["moving_section_number"], row["moving_z_index"]
+            if (isinstance(number, (bool, np.bool_)) or not isinstance(number, (int, np.integer))
+                    or isinstance(z_index, (bool, np.bool_)) or not isinstance(z_index, (int, np.integer))
+                    or number not in expected or number in seen or z_index != expected[number]):
+                raise ValueError("Section numbers or Z indices do not match completed stitched sections")
+            seen.add(number)
+            if not isinstance(row["moving_ROI"], ROI) or not isinstance(row["cumulative_ROI"], ROI):
+                raise ValueError(f"Missing or invalid ROI for section {number}")
+            for roi in (row["moving_ROI"], row["cumulative_ROI"]):
+                if (any(isinstance(v, (bool, np.bool_)) or not isinstance(v, (int, np.integer)) for v in roi)
+                        or roi.x1 <= roi.x0 or roi.y1 <= roi.y0):
+                    raise ValueError(f"Invalid ROI bounds for section {number}")
+            shift = row["current_shift"]
+            if (not isinstance(shift, np.ndarray) or shift.shape != (2,)
+                    or shift.dtype.kind not in "iuf" or not np.isfinite(shift).all()):
+                raise ValueError(f"Invalid pairwise shift for section {number}")
+            scale = row["down_scale"]
+            if (not isinstance(scale, (int, float, np.integer, np.floating))
+                    or not np.isfinite(scale) or scale < 1 or int(scale) != scale):
+                raise ValueError(f"Invalid down_scale for section {number}")
+        if seen != set(expected):
+            raise ValueError("Alignment table does not cover every completed stitched section")
+        # Correction uses the preview's zero-based plane numbers as row labels.
+        frame = frame.reset_index(drop=True)
+        frame["store_path"] = str((root_folder / "stitched_sections.zarr").resolve())
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_name = tempfile.mkstemp(prefix=".watcher-alignment-", suffix=".pkl", dir=target.parent)
+        os.close(fd)
+        try:
+            frame.to_pickle(temp_name)
+            try:
+                os.link(temp_name, target)
+            except FileExistsError:
+                return
+        finally:
+            os.unlink(temp_name)
+
+    @staticmethod
+    def _open_watcher_store(root_folder: Path):
+        import zarr
+        group = zarr.open_group(str(root_folder / "stitched_sections.zarr"), mode="r")
+        if (group.attrs.get("atlas_stitched_store_version") != 1
+                or group.attrs.get("axes") != ["z", "y", "x"]):
+            raise ValueError("Unsupported stitched store format")
+        return group
+
+    def _read_watcher_sections(self, root_folder: Path):
+        group = self._open_watcher_store(root_folder)
+        records = {}
+        if "sections" not in group:
+            return records
+        sections = group["sections"]
+        for key in sections:
+            attrs = sections[key].attrs
+            if attrs.get("status") == "complete":
+                records[int(attrs["atlas_section_number"])] = key
+        return dict(sorted(records.items()))
+
+    def _update_watcher_tree(self, root_folder: Path):
+        root = self.local_folder_tree.topLevelItem(0)
+        root.setText(0, f"{root_folder.name}: {len(self._watcher_sections)} completed sections available")
+        root.setToolTip(0, f"Watcher output: {root_folder}\nRefresh to check for more completed sections.")
+        for index in range(root.childCount()):
+            item = root.child(index)
+            item.setText(0, f"[PROCESSED] {Path(item.data(0, Qt.ItemDataRole.UserRole)).name}")
+            item.setData(0, SERIES_STATUS_COLOR_ROLE, PROCESSED)
+        self._update_project_leaf_and_zalign_controls(root_folder)
+        self._update_display_button_state(root_folder)
+
+    def _update_preview_control(self, root_folder: Path) -> None:
+        has_preview = self._has_preview_ome_zarr_output(root_folder)
+        has_alignment = self._has_z_alignment_results(root_folder)
+        self.zalign_preview_button.setText("Preview" if has_preview or not has_alignment else "Render and Preview")
+        self.zalign_preview_button.setEnabled(
+            has_preview or (has_alignment and not self._is_processing)
+        )
 
     def browse_for_atlas_project(self) -> None:
+        if self._is_processing or self._is_zalign_running() or self._is_export_running():
+            show_error("Wait for the current operation to finish before changing projects.")
+            return
         preferences = QSettings("CCI-GU-Sweden", "napari-atlas-cci")
         remembered = preferences.value("last_project_folder", "", type=str)
         start = Path(remembered or self.path_edit.text().strip() or str(self.main_directory)).expanduser()
@@ -315,11 +479,10 @@ class AtlasCCIWidget(QWidget):
         if not selected_dir:
             return
 
-        self.main_directory = Path(selected_dir)
-        preferences.setValue("last_project_folder", str(self.main_directory))
+        preferences.setValue("last_project_folder", selected_dir)
 
-        self.path_edit.setText(str(self.main_directory))
-        self.refresh_local_folder_tree()
+        self.path_edit.setText(selected_dir)
+        self.refresh_local_folder_tree(allow_import=True)
 
     def _series_identifier_candidates(self, series_folder: Path) -> list[str]:
         """Return likely identifiers for output files across naming conventions."""
@@ -468,7 +631,7 @@ class AtlasCCIWidget(QWidget):
         return has_tiff and has_csv and has_json
 
     def _has_z_alignment_results(self, root_folder: Path) -> bool:
-        return root_folder.joinpath("alignment_results", "z_alignment_results.pkl").exists()
+        return (root_folder / ALIGNMENT_RESULTS_PATH).exists()
 
     def _aligned_zarr_path(self, root_folder: Path) -> Path:
         return root_folder.joinpath(f"{root_folder.name}_aligned.zarr")
@@ -477,7 +640,7 @@ class AtlasCCIWidget(QWidget):
         return root_folder.joinpath(f"{root_folder.name}_aligned.ome.zarr")
 
     def _preview_ome_zarr_path(self, root_folder: Path) -> Path:
-        return root_folder.joinpath(f"{root_folder.name}_downsample.ome.zarr")
+        return root_folder / f"{_preview_layer_name(root_folder)}.ome.zarr"
 
     def _legacy_alignment_zarr_path(self, root_folder: Path) -> Path:
         return root_folder.joinpath(f"{root_folder.name}.zarr")
@@ -507,6 +670,12 @@ class AtlasCCIWidget(QWidget):
         return True
 
     def _update_project_leaf_and_zalign_controls(self, root_folder: Path) -> None:
+        if self._watcher_mode:
+            self._update_alignment_controls(
+                root_folder, initial_ready=bool(self._watcher_sections)
+            )
+            return
+
         root_item = self.local_folder_tree.topLevelItem(0)
         if root_item is None:
             return
@@ -555,27 +724,53 @@ class AtlasCCIWidget(QWidget):
             ),
         )
 
-        if not self._is_zalign_running() and not self._is_export_running():
-            has_master = (root_folder / "stitched_sections.zarr").is_dir()
-            self.zalign_zshift_button.setEnabled(not self._is_processing and (all_processed or has_master))
-            self.zalign_preview_button.setEnabled(has_preview_ome_zarr)
-            self.correction_Z_btn.setEnabled(has_zcalc)
-            self.correction_apply_btn.setEnabled(has_zcalc)
-            self.zalign_final_button.setEnabled(has_zcalc)
-            self.zalign_view_button.setEnabled(has_aligned_ome_zarr)
-            self.export_czi_button.setEnabled(has_zarr)
-            self.upload_wkn_button.setEnabled(has_zarr)
-            self._update_zalign_status_from_outputs(
-                all_processed=all_processed,
-                has_zcalc=has_zcalc,
-                has_preview_ome_zarr=has_preview_ome_zarr,
-                has_zarr=has_zarr,
+        has_master = (root_folder / "stitched_sections.zarr").is_dir()
+        self._update_alignment_controls(root_folder, initial_ready=all_processed or has_master)
+
+    def _update_alignment_controls(self, root_folder: Path, *, initial_ready: bool) -> None:
+        if self._is_zalign_running() or self._is_export_running():
+            return
+
+        has_zcalc = self._has_z_alignment_results(root_folder)
+        has_preview = self._has_preview_ome_zarr_output(root_folder)
+        has_zarr = self._has_aligned_zarr_output(root_folder)
+        self.zalign_zshift_button.setEnabled(initial_ready and not self._is_processing)
+        self._update_preview_control(root_folder)
+        self._update_correction_controls()
+        self.zalign_final_button.setEnabled(has_zcalc)
+        self.zalign_view_button.setEnabled(self._has_aligned_ome_zarr_output(root_folder))
+        self.export_czi_button.setEnabled(has_zarr)
+        self.upload_wkn_button.setEnabled(has_zarr)
+        self._update_zalign_status_from_outputs(
+            all_processed=initial_ready,
+            has_zcalc=has_zcalc,
+            has_preview_ome_zarr=has_preview,
+            has_zarr=has_zarr,
+        )
+
+    def _update_correction_controls(self, _event=None) -> None:
+        root_folder = Path(self.main_directory)
+        preview_name = _preview_layer_name(root_folder)
+        can_correct = (
+            not self._is_zalign_running()
+            and not self._is_export_running()
+            and self._has_z_alignment_results(root_folder)
+            and any(
+                isinstance(layer, Image) and layer.name == preview_name
+                for layer in getattr(self.viewer, "layers", ())
             )
+        )
+        self.correction_Z_btn.setEnabled(can_correct)
+        self.correction_apply_btn.setEnabled(can_correct)
 
     def update_series_status_indicators(self, root_folder: Path) -> None:
         """Update status labels/colors for each S_ child in the tree."""
         root_item = self.local_folder_tree.topLevelItem(0)
         if root_item is None:
+            return
+
+        if self._watcher_mode:
+            self._update_watcher_tree(root_folder)
             return
 
         self._master_sections_cache = self._read_master_sections(root_folder)
@@ -612,6 +807,10 @@ class AtlasCCIWidget(QWidget):
     def _start_processing_queue(self, series_paths: list[Path]) -> None:
         if self._is_processing:
             show_error("Processing is already running.")
+            return
+
+        if getattr(self, "_zalign_active_action", None) == "preview":
+            show_error("Wait for preview rendering to finish before stitching.")
             return
 
         unique_series_paths: list[Path] = []
@@ -760,6 +959,8 @@ class AtlasCCIWidget(QWidget):
         self.download_wkn_button.setEnabled(False)
         if self._zalign_active_action == "initial":
             self._set_zalign_status("ONGOING", "Running initial Z alignment", ONGOING)
+        elif self._zalign_active_action == "preview":
+            self._set_zalign_status("ONGOING", "Rendering alignment preview", ONGOING)
         elif self._zalign_active_action == "correction":
             self._set_zalign_status("ONGOING", "Applying manual Z correction preview", ONGOING)
         elif self._zalign_active_action == "final":
@@ -884,6 +1085,8 @@ class AtlasCCIWidget(QWidget):
             self.correction_apply_btn.setText("Apply Correction")
             self.zalign_final_button.setText("Final Z Alignment")
             self.zalign_view_button.setText("View")
+        elif self._zalign_active_action == "preview":
+            self.zalign_preview_button.setText(f"Rendering Preview {frame}")
         elif self._zalign_active_action == "correction":
             self.correction_apply_btn.setText(f"Apply Correction {frame}")
             self.zalign_zshift_button.setText("Initial Z Alignment")
@@ -924,7 +1127,7 @@ class AtlasCCIWidget(QWidget):
             show_error(message)
             return
 
-        if action in {"initial", "correction", "final"}:
+        if action in {"initial", "preview", "correction", "final"}:
             typed_payload = cast(dict[str, str | float | list[str]], payload if isinstance(payload, dict) else {})
             if action == "initial":
                 axial_value = typed_payload.get("Axial")
@@ -945,6 +1148,8 @@ class AtlasCCIWidget(QWidget):
             self.update_series_status_indicators(Path(self.main_directory))
             if action == "initial":
                 self._set_zalign_status("PROCESSED", "Initial Z alignment complete", PROCESSED)
+            elif action == "preview":
+                self._set_zalign_status("PROCESSED", "Preview Z alignment displayed", PROCESSED)
             elif action == "correction":
                 points_count = int(cast(float, typed_payload.get("points_count", 0)))
                 self._set_zalign_status(
@@ -1017,6 +1222,12 @@ class AtlasCCIWidget(QWidget):
             return
 
         series_path = self._get_series_path_from_item(selected_items[0])
+        if self._watcher_mode:
+            self.display_btn.setEnabled(
+                series_path is not None and series_path.name.startswith("S_")
+                and series_path.name[2:].isdigit()
+                and int(series_path.name[2:]) in self._watcher_sections)
+            return
         if series_path is None or not series_path.is_dir() or not series_path.name.startswith("S_"):
             self.display_btn.setEnabled(False)
             return
@@ -1138,6 +1349,19 @@ class AtlasCCIWidget(QWidget):
             return
 
         series_path = self._get_series_path_from_item(selected_items[0])
+        if self._watcher_mode:
+            try:
+                number = int(series_path.name[2:])
+                group = self._open_watcher_store(Path(self.main_directory))
+                record = group["sections"][self._watcher_sections[number]].attrs
+                if record.get("status") != "complete":
+                    raise ValueError("Section is no longer complete; refresh the project")
+                height, width = record["shape_yx"]
+                image = group["images"][record["z_index"], :height, :width]
+                self.viewer.add_image(image, name=f"Stitched Image S_{number}")
+            except Exception as exc:
+                show_error(f"Failed to load stitched image: {exc}")
+            return
         if series_path is None or not series_path.is_dir() or not series_path.name.startswith("S_"):
             show_error("Selected item is not a valid S_ series folder.")
             return
@@ -1202,9 +1426,9 @@ class AtlasCCIWidget(QWidget):
             frame = initialize_zarr_alignment_df(store, order, self.settings.downsampling_factor)
             frame = pairwise_zarr_alignment(frame, store)
             frame = calculate_cumulative_shifts(frame)
-            output = root_folder / "alignment_results"
-            output.mkdir(parents=True, exist_ok=True)
-            frame.to_pickle(output / "z_alignment_results.pkl")
+            alignment_path = root_folder / ALIGNMENT_RESULTS_PATH
+            alignment_path.parent.mkdir(parents=True, exist_ok=True)
+            frame.to_pickle(alignment_path)
             return True, "", {"Value": xy_um, "Axial": float(axial_value), "Unit": axial_unit}
 
         csv_candidates = sorted(root_folder.glob("phaseCC_stitching_*.csv"))
@@ -1373,7 +1597,7 @@ class AtlasCCIWidget(QWidget):
         from atlas.io import apply_alignment
         import shutil
 
-        z_align_df_path = alignment_path or root_folder.joinpath("alignment_results", "z_alignment_results.pkl")
+        z_align_df_path = alignment_path or (root_folder / ALIGNMENT_RESULTS_PATH)
         if not z_align_df_path.exists():
             return False, "Z alignment results not found. Please run the alignment first.", None
 
@@ -1406,7 +1630,7 @@ class AtlasCCIWidget(QWidget):
         success, message, payload = self._write_ome_zarr_pyramid_from_array(
             data,
             ome_path or self._preview_ome_zarr_path(root_folder),
-            root_folder.name + "_downsample",
+            _preview_layer_name(root_folder),
             atlas_metadata,
         )
         legacy_zarr_path = self._legacy_alignment_zarr_path(root_folder)
@@ -1423,7 +1647,7 @@ class AtlasCCIWidget(QWidget):
         import dask.array as da
         import shutil
 
-        z_align_df_path = root_folder.joinpath("alignment_results", "z_alignment_results.pkl")
+        z_align_df_path = root_folder / ALIGNMENT_RESULTS_PATH
         if not z_align_df_path.exists():
             return False, "Z alignment results not found. Please run the alignment first.", None
 
@@ -1575,7 +1799,7 @@ class AtlasCCIWidget(QWidget):
         from atlas.alignment import correct_z_alignment_from_points
         import shutil
 
-        z_align_df_path = root_folder.joinpath("alignment_results", "z_alignment_results.pkl")
+        z_align_df_path = root_folder / ALIGNMENT_RESULTS_PATH
         if not z_align_df_path.exists():
             return False, "Z alignment results not found. Please run initial Z alignment first.", None
 
@@ -1760,7 +1984,7 @@ class AtlasCCIWidget(QWidget):
 
         success, message = self.zarr_viewer.display_ome_zarr(
             ome_zarr_path,
-            layer_name=root_folder.name + ("_downsample" if use_downsample else ""),
+            layer_name=(_preview_layer_name(root_folder) if use_downsample else root_folder.name),
         )
         if not success:
             self._set_zalign_status("FAILED", message, FAILED)
@@ -1774,7 +1998,23 @@ class AtlasCCIWidget(QWidget):
             self._set_zalign_status("PROCESSED", "Final Z alignment displayed", PROCESSED)
 
     def display_initial_zalign_preview(self) -> None:
-        self._display_zalign_ome_zarr(use_downsample=True)
+        root_folder = Path(self.main_directory)
+        if self._has_preview_ome_zarr_output(root_folder):
+            self._display_zalign_ome_zarr(use_downsample=True)
+            return
+        if self._is_zalign_running() or self._is_export_running():
+            show_error("Wait for the current operation to finish before rendering the preview.")
+            return
+        if not self._has_z_alignment_results(root_folder):
+            show_error("Z alignment results not found. Please run initial Z alignment first.")
+            self.update_series_status_indicators(root_folder)
+            return
+        if self._is_processing:
+            show_error("Wait for stitching to finish before rendering the preview.")
+            return
+        self._zalign_active_action = "preview"
+        self._zalign_future = self._zalign_executor.submit(self._apply_z_shifts_preview_worker, root_folder)
+        self._set_zalign_buttons_busy()
 
     def display_final_zalign_output(self) -> None:
         self._display_zalign_ome_zarr(use_downsample=False)
@@ -1783,7 +2023,7 @@ class AtlasCCIWidget(QWidget):
         import gc
 
         root_folder = Path(self.main_directory)
-        layer_name = root_folder.name + ("_downsample" if use_downsample else "")
+        layer_name = (_preview_layer_name(root_folder) if use_downsample else root_folder.name)
         if self.zarr_viewer.remove_layer(layer_name):
             QApplication.processEvents()
             gc.collect()

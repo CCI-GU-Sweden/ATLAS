@@ -36,21 +36,31 @@ jobs:
     env:
       MPLBACKEND: Agg
       QT_QPA_PLATFORM: offscreen
+      QT_API: pyqt6
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: conda-incubator/setup-miniconda@v3
         with:
+          miniforge-version: latest
+          activate-environment: atlas-napari
           python-version: "3.11"
-          cache: "pip"
+          channels: conda-forge
+          channel-priority: strict
       - name: Install Qt runtime libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y libegl1 libopengl0 libxkbcommon-x11-0
-      - name: Install package with test extras
+      - name: Install package and test tools
+        shell: bash -el {0}
         run: |
+          conda install -y -c conda-forge napari "pyqt6>=6.7" pip
+          napari_version=$(python -c 'from importlib.metadata import version; print(version("napari"))')
           python -m pip install --upgrade pip
-          python -m pip install ".[testing]"
+          python -m pip install .
+          python -m pip install pytest pytest-cov pytest-qt
+          python -c 'from importlib.metadata import version; import sys; actual = version("napari"); print("napari version:", actual); sys.exit(actual != sys.argv[1])' "$napari_version"
       - name: Run smoke tests
+        shell: bash -el {0}
         run: python -m pytest
