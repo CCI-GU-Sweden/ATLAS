@@ -1,0 +1,69 @@
+name: Build backend release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Verify backend release artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate the release tag
+        if: github.event_name == 'push'
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$ ]]; then
+            echo "Expected a backend tag like vX.Y.Z or vX.Y.ZrcN." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
+            echo "The release tag must point to a commit on main." >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Build and check the distributions
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check --strict dist/*.tar.gz dist/*.whl
+
+      - name: Match the artifacts to the release tag
+        if: github.event_name == 'push'
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          test -f "dist/atlas_cci_align-${version}.tar.gz"
+          test -f "dist/atlas_cci_align-${version}-py3-none-any.whl"
+
+      - name: Smoke test the installed wheel outside the checkout
+        env:
+          MPLBACKEND: Agg
+        run: |
+          cd "$(mktemp -d)"
+          python -m venv wheel-env
+          wheel-env/bin/python -m pip install "$GITHUB_WORKSPACE"/dist/*.whl
+          wheel-env/bin/python -m pip check
+          wheel-env/bin/python -I -c 'from atlas.io import StitchedZarrStore, apply_alignment_zarr; from atlas.alignment import pairwise_zarr_alignment; from atlas.stitching import stitch_ATLAS_tiles'
+
+      - name: Save the verified distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ github.event_name == 'push' && format('{0}-distributions', github.ref_name) || format('backend-rehearsal-{0}', github.run_id) }}
+          path: |
+            dist/*.tar.gz
+            dist/*.whl
+          if-no-files-found: error
