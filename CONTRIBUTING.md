@@ -1,5 +1,12 @@
 # Contributing to ATLAS
 
+## Backend distributions
+
+The wheel ships the `atlas` package and its license. The source distribution
+also includes the tests, build configuration, and contributor guide.
+Notebooks, standalone scripts, and experiments are available from the Git
+repository.
+
 ## Release the backend
 
 The backend distribution is `atlas-cci-align`. Its version is derived from the
