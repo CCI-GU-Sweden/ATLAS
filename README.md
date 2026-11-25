@@ -157,6 +157,12 @@ complete and that its metadata and tiles are present. The plugin writes the
 master `stitched_sections.zarr` and alignment outputs alongside the S folders
 in the selected section-set folder.
 
+For a watcher output copy without S folders, select the folder containing
+`stitched_sections.zarr`. Completed sections are available to select and display;
+click **Refresh** to discover newly completed sections. This view is read-only,
+and does not imply that the acquisition has finished. Stitching, alignment,
+and export controls are disabled in this mode.
+
 ![Initial status](assets/Unprocessed_folder.png)
 
 ### 2D stitching

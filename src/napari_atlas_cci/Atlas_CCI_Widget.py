@@ -76,6 +76,8 @@ class AtlasCCIWidget(QWidget):
         self._series_futures: dict[Path, Future] = {}
         self._stitch_events = SimpleQueue()
         self._master_sections_cache = None
+        self._watcher_mode = False
+        self._watcher_sections = {}
         self._processing_order: list[Path] = []
         self._next_queue_index = 0
         self._status_timer = QTimer(self)
@@ -113,6 +115,10 @@ class AtlasCCIWidget(QWidget):
         self.browse_btn = QPushButton("Browse...")
         self.browse_btn.clicked.connect(self.browse_for_atlas_project)
         self.path_layout.addWidget(self.browse_btn)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(self.refresh_local_folder_tree)
+        self.refresh_btn.setVisible(False)
+        self.path_layout.addWidget(self.refresh_btn)
 
         self.options_button = QPushButton("Options...")
         self.options_button.clicked.connect(self.open_options_dialog)
@@ -274,24 +280,41 @@ class AtlasCCIWidget(QWidget):
         return series_list
 
     def refresh_local_folder_tree(self) -> None:
+        if self._is_processing or self._is_zalign_running() or self._is_export_running():
+            show_error("Wait for the current operation to finish before refreshing the project.")
+            return
         path_text = self.path_edit.text().strip()
         if not path_text:
             show_error("Please provide an atlas project folder path.")
-            self.local_folder_tree.clear()
+            self.path_edit.setText(str(self.main_directory))
             return
 
         project_root = Path(path_text).expanduser()
         if not project_root.exists() or not project_root.is_dir():
             show_error("Invalid path. Please provide an existing folder.")
-            self.local_folder_tree.clear()
+            self.path_edit.setText(str(self.main_directory))
             return
 
         try:
-            series_folders = self.search_for_atlas_project(project_root)
-        except OSError as exc:
+            from atlas.io import get_valid_slice_folders
+            valid, failed = get_valid_slice_folders(project_root)
+            # Failed records may omit the folder path; their presence still indicates raw data.
+            has_raw = bool(valid or failed)
+            watcher_mode = not has_raw and (project_root / "stitched_sections.zarr").is_dir()
+            records = self._read_watcher_sections(project_root) if watcher_mode else {}
+            series_folders = ([project_root / f"S_{n:04d}" for n in records]
+                              if watcher_mode else valid)
+        except Exception as exc:
             show_error(f"Could not read folder: {exc}")
-            self.local_folder_tree.clear()
+            self.path_edit.setText(str(self.main_directory))
             return
+
+        self.main_directory = project_root
+        self._watcher_mode = watcher_mode
+        self._watcher_sections = records
+        self.refresh_btn.setVisible(watcher_mode)
+        self.stitching_all_btn.setEnabled(not watcher_mode)
+        self.stitching_one_btn.setEnabled(not watcher_mode)
 
         # Reset transient runtime statuses on project reload.
         self.pending_series.clear()
@@ -299,9 +322,52 @@ class AtlasCCIWidget(QWidget):
         self.failed_series.clear()
 
         self.local_folder_tree.populate_from_project(project_root, series_folders)
-        self.update_series_status_indicators(project_root)
+        if watcher_mode:
+            self._update_watcher_tree(project_root)
+        else:
+            self.update_series_status_indicators(project_root)
+
+    @staticmethod
+    def _open_watcher_store(root_folder: Path):
+        import zarr
+        group = zarr.open_group(str(root_folder / "stitched_sections.zarr"), mode="r")
+        if (group.attrs.get("atlas_stitched_store_version") != 1
+                or group.attrs.get("axes") != ["z", "y", "x"]):
+            raise ValueError("Unsupported stitched store format")
+        return group
+
+    def _read_watcher_sections(self, root_folder: Path):
+        group = self._open_watcher_store(root_folder)
+        records = {}
+        if "sections" not in group:
+            return records
+        sections = group["sections"]
+        for key in sections:
+            attrs = sections[key].attrs
+            if attrs.get("status") == "complete":
+                records[int(attrs["atlas_section_number"])] = key
+        return dict(sorted(records.items()))
+
+    def _update_watcher_tree(self, root_folder: Path):
+        root = self.local_folder_tree.topLevelItem(0)
+        root.setText(0, f"{root_folder.name}: {len(self._watcher_sections)} completed sections available")
+        root.setToolTip(0, f"Watcher output: {root_folder}\nRefresh to check for more completed sections.")
+        for index in range(root.childCount()):
+            item = root.child(index)
+            item.setText(0, f"[PROCESSED] {Path(item.data(0, Qt.ItemDataRole.UserRole)).name}")
+            item.setData(0, SERIES_STATUS_COLOR_ROLE, PROCESSED)
+        for control in (self.zalign_zshift_button, self.zalign_preview_button,
+                        self.correction_Z_btn, self.correction_apply_btn,
+                        self.zalign_final_button, self.zalign_view_button,
+                        self.export_czi_button, self.upload_wkn_button):
+            control.setEnabled(False)
+        self._set_zalign_status("UNPROCESSED", "Watcher output: read only", UNPROCESSED)
+        self._update_display_button_state(root_folder)
 
     def browse_for_atlas_project(self) -> None:
+        if self._is_processing or self._is_zalign_running() or self._is_export_running():
+            show_error("Wait for the current operation to finish before changing projects.")
+            return
         preferences = QSettings("CCI-GU-Sweden", "napari-atlas-cci")
         remembered = preferences.value("last_project_folder", "", type=str)
         start = Path(remembered or self.path_edit.text().strip() or str(self.main_directory)).expanduser()
@@ -315,10 +381,9 @@ class AtlasCCIWidget(QWidget):
         if not selected_dir:
             return
 
-        self.main_directory = Path(selected_dir)
-        preferences.setValue("last_project_folder", str(self.main_directory))
+        preferences.setValue("last_project_folder", selected_dir)
 
-        self.path_edit.setText(str(self.main_directory))
+        self.path_edit.setText(selected_dir)
         self.refresh_local_folder_tree()
 
     def _series_identifier_candidates(self, series_folder: Path) -> list[str]:
@@ -1017,6 +1082,12 @@ class AtlasCCIWidget(QWidget):
             return
 
         series_path = self._get_series_path_from_item(selected_items[0])
+        if self._watcher_mode:
+            self.display_btn.setEnabled(
+                series_path is not None and series_path.name.startswith("S_")
+                and series_path.name[2:].isdigit()
+                and int(series_path.name[2:]) in self._watcher_sections)
+            return
         if series_path is None or not series_path.is_dir() or not series_path.name.startswith("S_"):
             self.display_btn.setEnabled(False)
             return
@@ -1138,6 +1209,19 @@ class AtlasCCIWidget(QWidget):
             return
 
         series_path = self._get_series_path_from_item(selected_items[0])
+        if self._watcher_mode:
+            try:
+                number = int(series_path.name[2:])
+                group = self._open_watcher_store(Path(self.main_directory))
+                record = group["sections"][self._watcher_sections[number]].attrs
+                if record.get("status") != "complete":
+                    raise ValueError("Section is no longer complete; refresh the project")
+                height, width = record["shape_yx"]
+                image = group["images"][record["z_index"], :height, :width]
+                self.viewer.add_image(image, name=f"Stitched Image S_{number}")
+            except Exception as exc:
+                show_error(f"Failed to load stitched image: {exc}")
+            return
         if series_path is None or not series_path.is_dir() or not series_path.name.startswith("S_"):
             show_error("Selected item is not a valid S_ series folder.")
             return
