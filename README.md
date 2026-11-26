@@ -16,8 +16,7 @@ aligned stack for viewing and further analysis.
 - [Backend examples](backend/examples/README.md) for notebooks, standalone
   scripts, and Jupyter setup.
 - [Backend changelog](backend/CHANGELOG.md) for release changes.
-- [Napari plugin](https://github.com/CCI-GU-Sweden/napari-atlas-cci) for the
-  interactive workflow.
+- [Napari plugin](plugin/README.md) for the interactive workflow.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development and release instructions
 and [LICENSE](LICENSE) for the project's MIT license.

@@ -51,3 +51,34 @@ jobs:
           python -m pip install "./backend[test]"
       - name: Run smoke tests
         run: python -m pytest backend/tests backend/examples/tests
+
+  plugin:
+    name: Napari plugin and backend integration
+    runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
+      QT_QPA_PLATFORM: offscreen
+      QT_API: pyqt6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          activate-environment: atlas-napari
+          python-version: "3.11"
+          channels: conda-forge
+          channel-priority: strict
+      - name: Install Qt runtime libraries
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libxkbcommon-x11-0
+      - name: Install both local packages and test tools
+        shell: bash -el {0}
+        run: |
+          conda install -y -c conda-forge napari "pyqt6>=6.7" pip
+          napari_version=$(python -c 'from importlib.metadata import version; print(version("napari"))')
+          python -m pip install ./plugin
+          python -m pip install --no-deps ./backend
+          python -m pip install pytest pytest-cov pytest-qt
+          python -c 'from importlib.metadata import version; import sys; sys.exit(version("napari") != sys.argv[1])' "$napari_version"
+      - name: Run plugin tests
+        shell: bash -el {0}
+        run: python -m pytest plugin/tests
