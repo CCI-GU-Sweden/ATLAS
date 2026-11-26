@@ -4,10 +4,11 @@ Notable changes are recorded here. Entries for version 1.1.9 and earlier were
 reconstructed from Git history and summarize the main changes rather than
 every fix. Dates are the dates recorded on the Git tags.
 
-## Unreleased
+## 1.2.0rc1
 
 The plugin is now developed in the ATLAS repository under `plugin/`.
-Its development version is independent of the backend's Git tags.
+Its version is independent of the backend's Git tags. This release candidate
+is intended for testing before the stable 1.2.0 release.
 
 ### Added
 
