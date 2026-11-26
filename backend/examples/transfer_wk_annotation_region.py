@@ -28,7 +28,7 @@ PYRAMID_JOBS = 4
 BOUNDING_BOX_INDEX = None
 LAYER_NAMES = None  # None downloads all image/color layers, excluding segmentation.
 OUTPUT_DIR = (
-    Path(__file__).resolve().parent
+    Path(__file__).resolve().parents[2]
     / "private-data" / "wk-transfer" / f"{ANNOTATION_ID}_mag{MAG}"
 )
 TARGET_DATASET_NAME = None  # None uses <source dataset name>_mag<MAG>.

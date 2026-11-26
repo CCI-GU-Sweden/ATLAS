@@ -1,0 +1,3 @@
+# Keep the source distribution focused on the installable backend and its tests.
+include CHANGELOG.md
+prune examples

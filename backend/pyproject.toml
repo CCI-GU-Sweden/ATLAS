@@ -60,6 +60,8 @@ include = ["atlas*"]
 "*" = ["*.yaml"]
 
 [tool.setuptools_scm]
+root = ".."
+fallback_root = "."
 fallback_version = "0.0.0"
 
 [tool.black]
@@ -109,6 +111,7 @@ exclude = [
 fix = true
 
 [tool.pytest.ini_options]
+pythonpath = ["examples"]
 markers = [
     "integration: tests that need external data or long-running processing",
 ]
