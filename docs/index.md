@@ -18,3 +18,6 @@ available during the transition.
 - [Browse notebooks and scripts](backend/examples.md)
 
 The Python distribution is `atlas-cci-align`; import it as `atlas`.
+
+For a graphical workflow in napari, see the [plugin installation guide](plugin/install.md)
+and [plugin quickstart](plugin/quickstart.md).

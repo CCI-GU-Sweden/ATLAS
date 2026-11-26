@@ -1,6 +1,6 @@
 site_name: ATLAS
 site_url: https://cci-gu-sweden.github.io/ATLAS/
-site_description: Documentation for the ATLAS backend
+site_description: Documentation for the ATLAS backend and napari plugin
 repo_url: https://github.com/CCI-GU-Sweden/ATLAS
 repo_name: ATLAS on GitHub
 
@@ -27,3 +27,7 @@ nav:
       - Input data: backend/input-data.md
       - Outputs: backend/outputs.md
       - Examples: backend/examples.md
+  - Plugin:
+      - Installation: plugin/install.md
+      - Quickstart: plugin/quickstart.md
+      - Workflow: plugin/workflow.md
