@@ -1,6 +1,6 @@
 [project]
 name = "napari-atlas-cci"
-version = "1.2.0.dev0"
+version = "1.2.0rc1"
 description = "A plugin that allows napari to run atlas stitching and alignement tool"
 readme = "README.md"
 license = {file = "LICENSE"}
