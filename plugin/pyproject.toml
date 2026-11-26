@@ -1,0 +1,99 @@
+[project]
+name = "napari-atlas-cci"
+version = "1.2.0.dev0"
+description = "A plugin that allows napari to run atlas stitching and alignement tool"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+  {name = "Simon Leclerc", email = "simon.leclerc@gu.se"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: napari",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+requires-python = ">=3.11,<3.13"
+
+dependencies = [
+    "numpy",
+    "qtpy",
+    "scipy",
+    "ome-zarr",
+    "dask",
+    "webknossos>=4.0.0,<5",
+    "pylibCZIrw",
+    "atlas-cci-align>=1.3.19"
+]
+
+[project.optional-dependencies]
+all = ["napari[all]"]
+
+testing = [
+    "pytest",
+    "pytest-cov",  # https://pytest-cov.readthedocs.io/en/latest/
+    "pytest-qt",  # https://pytest-qt.readthedocs.io/en/latest/
+    "napari",  # install a Qt backend separately
+]
+dev = [
+    "napari-omero-downloader-cci[testing]",
+    "black",
+    "ruff",
+]
+
+[project.entry-points."napari.manifest"]
+napari-atlas-cci = "napari_atlas_cci:napari.yaml"
+
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml"]
+
+[tool.black]
+line-length = 79
+target-version = ['py311', 'py312']
+
+
+lint.ignore = [
+    "E501", # line too long. let black handle this
+    "UP006", "UP007", # type annotation. As using magicgui require runtime type annotation then we disable this.
+]
+
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".mypy_cache",
+    ".pants.d",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+    "*vendored*",
+    "*_vendor*",
+]
+fix = true
