@@ -1,0 +1,83 @@
+name: Publish plugin release to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: 'Run ID of the reviewed Build plugin release workflow'
+        required: true
+        type: string
+      confirm_public_upload:
+        description: 'I have reviewed the artifacts and approve publishing them to PyPI'
+        required: true
+        default: false
+        type: boolean
+
+permissions: {}
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main' && inputs.confirm_public_upload
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - name: Verify the selected release build
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          if [[ ! "$RELEASE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "Enter the numeric run ID from the release build URL." >&2
+            exit 1
+          fi
+
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID" --jq '
+            select(.path == ".github/workflows/release-plugin.yml"
+              and .event == "push" and .status == "completed" and .conclusion == "success")
+            | [.head_branch, .head_sha] | @tsv
+          ')
+          read -r tag build_sha <<< "$run"
+          if [[ ! "$tag" =~ ^napari-v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$ ]]; then
+            echo "Select a successful plugin release build for a napari-vX.Y.Z or napari-vX.Y.ZrcN tag." >&2
+            exit 1
+          fi
+
+          tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)
+          if [[ "$tag_sha" != "$build_sha" ]]; then
+            echo "The release tag does not point to the verified build commit." >&2
+            exit 1
+          fi
+
+          {
+            echo "artifact_name=${tag}-distributions"
+            echo "version=${tag#napari-v}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download the verified distributions
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.release_run_id }}
+          name: ${{ steps.release.outputs.artifact_name }}
+          path: dist/
+
+      - name: Check the upload contains only the expected files
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          shopt -s nullglob dotglob
+          files=(dist/*)
+          if [[ ${#files[@]} -ne 2 ||
+                ! -f "dist/napari_atlas_cci-${VERSION}.tar.gz" ||
+                ! -f "dist/napari_atlas_cci-${VERSION}-py3-none-any.whl" ]]; then
+            echo "Expected only the plugin wheel and source archive for ${VERSION}." >&2
+            exit 1
+          fi
+
+      - name: Publish to PyPI with Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
