@@ -24,4 +24,6 @@ nav:
   - Backend:
       - Installation: backend/install.md
       - Quickstart: backend/quickstart.md
+      - Input data: backend/input-data.md
+      - Outputs: backend/outputs.md
       - Examples: backend/examples.md

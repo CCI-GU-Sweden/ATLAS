@@ -13,6 +13,8 @@ available during the transition.
 
 - [Install the backend and set up Jupyter](backend/install.md)
 - [Run the raw import and Zarr alignment workflow](backend/quickstart.md)
+- [Prepare input data](backend/input-data.md) and understand the
+  [workflow outputs](backend/outputs.md)
 - [Browse notebooks and scripts](backend/examples.md)
 
 The Python distribution is `atlas-cci-align`; import it as `atlas`.
