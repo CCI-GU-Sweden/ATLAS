@@ -1,11 +1,23 @@
 # Contributing to ATLAS
 
+## Develop the backend
+
+Run these commands from the repository root. If you already have the
+`atlas-env` environment, reinstall the editable package so it points at
+the backend's current location.
+
+```sh
+conda activate atlas-env
+python -m pip install -e "./backend[test]"
+python -m pytest backend/tests backend/examples/tests
+```
+
 ## Backend distributions
 
 The wheel ships the `atlas` package and its license. The source distribution
-also includes the tests, build configuration, and contributor guide.
-Notebooks, standalone scripts, and experiments are available from the Git
-repository.
+also includes the backend README, changelog, tests, and build configuration.
+Notebooks and standalone scripts live in `backend/examples/`. Its separate
+tests run in CI but are kept with the examples in Git.
 
 ## Release the backend
 

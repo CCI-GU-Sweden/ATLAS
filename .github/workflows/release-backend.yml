@@ -39,7 +39,7 @@ jobs:
       - name: Build and check the distributions
         run: |
           python -m pip install build twine
-          python -m build
+          python -m build --outdir dist backend
           python -m twine check --strict dist/*.tar.gz dist/*.whl
 
       - name: Match the artifacts to the release tag
