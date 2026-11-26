@@ -19,6 +19,27 @@ also includes the backend README, changelog, tests, and build configuration.
 Notebooks and standalone scripts live in `backend/examples/`. Its separate
 tests run in CI but are kept with the examples in Git.
 
+## Preview and publish the documentation
+
+From the ATLAS repository root, activate an existing `docs-env` with MkDocs
+Material, or create it with `conda env create --file environment-docs.yml`.
+
+```sh
+conda activate docs-env
+mkdocs build --strict
+mkdocs serve
+```
+
+Open `http://127.0.0.1:8000/ATLAS/` to preview the site. The **Documentation**
+workflow also builds the site on GitHub and lets reviewers download the
+generated HTML as an artifact.
+
+For the first deployment, select **GitHub Actions** as the source in the
+ATLAS repository's **Settings → Pages**. After the docs PR is merged and
+reviewed, run **Documentation** on `main` and select **Publish the main branch
+to GitHub Pages**. Open the URL reported by the deployment and verify the home
+page, the backend pages, and their links.
+
 ## Release the backend
 
 The backend distribution is `atlas-cci-align`. Its version is derived from the

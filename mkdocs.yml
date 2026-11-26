@@ -1,0 +1,27 @@
+site_name: ATLAS
+site_url: https://cci-gu-sweden.github.io/ATLAS/
+site_description: Documentation for the ATLAS backend
+repo_url: https://github.com/CCI-GU-Sweden/ATLAS
+repo_name: ATLAS on GitHub
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - pymdownx.highlight:
+      pygments_lang_class: true
+  - pymdownx.superfences
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Backend:
+      - Installation: backend/install.md
+      - Quickstart: backend/quickstart.md
+      - Examples: backend/examples.md
