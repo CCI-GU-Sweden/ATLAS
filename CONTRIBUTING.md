@@ -72,3 +72,32 @@ Git tags and PyPI releases. Use a new version for any changed source.
    that run ID and check the publication confirmation. The workflow verifies
    that the tag still points to the build commit and uploads the two checked
    artifacts from that run.
+
+## Release the Napari plugin
+
+The plugin's version is set in `plugin/pyproject.toml`, independently of the
+backend. Use `napari-vX.Y.ZrcN` for a release candidate or `napari-vX.Y.Z`
+for a stable release. Check existing tags and PyPI releases before choosing a
+version, and update `plugin/CHANGELOG.md` for the release.
+
+1. Set the candidate version in `plugin/pyproject.toml`, review it in a PR,
+   and merge it to `main`. Configure the `napari-atlas-cci` PyPI Trusted
+   Publisher for this repository and `publish-plugin-pypi.yml`.
+2. Run **Build plugin release** on `main` without a tag to rehearse the
+   build and widget discovery. The rehearsal does not publish to PyPI.
+3. Once CI and the rehearsal pass, create an annotated tag pointing to the
+   reviewed `main` commit. For example:
+
+   ```sh
+   git fetch origin --tags
+   git tag -a napari-v1.2.0rc1 <commit-sha> -m "Release napari-atlas-cci 1.2.0rc1"
+   git push origin refs/tags/napari-v1.2.0rc1
+   ```
+
+4. Review the tagged **Build plugin release** run and its wheel and source
+   archive. Save its run ID. The build checks the tag against the version and
+   `main`, then verifies the installed widget in an offscreen Napari session.
+5. Run **Publish plugin release to PyPI** on `main`, entering the run ID and
+   confirming the public upload. It publishes the reviewed artifacts without
+   rebuilding them. Install the exact candidate in a separate environment to
+   verify the PyPI release.

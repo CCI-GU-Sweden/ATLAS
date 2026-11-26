@@ -1,0 +1,108 @@
+name: Build plugin release
+
+on:
+  push:
+    tags:
+      - 'napari-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Verify plugin release artifacts
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      MPLBACKEND: Agg
+      QT_QPA_PLATFORM: offscreen
+      QT_API: pyqt6
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate the release tag
+        if: github.event_name == 'push'
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^napari-v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$ ]]; then
+            echo "Expected a plugin tag such as napari-vX.Y.Z or napari-vX.Y.ZrcN." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
+            echo "The release tag must point to a commit on main." >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("plugin/pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+          expected = f"napari-v{version}"
+          if os.environ["GITHUB_REF_NAME"] != expected:
+              raise SystemExit(f"Expected {expected}, got {os.environ['GITHUB_REF_NAME']}.")
+          PY
+
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          activate-environment: atlas-napari
+          python-version: '3.11'
+          channels: conda-forge
+          channel-priority: strict
+
+      - name: Build and check the distributions
+        run: |
+          python -m pip install build twine
+          python -m build --outdir dist plugin
+          python -m twine check --strict dist/*.tar.gz dist/*.whl
+
+      - name: Check artifact versions
+        if: github.event_name == 'push'
+        run: |
+          version=${GITHUB_REF_NAME#napari-v}
+          test -f "dist/napari_atlas_cci-${version}.tar.gz"
+          test -f "dist/napari_atlas_cci-${version}-py3-none-any.whl"
+
+      - name: Install Qt runtime libraries
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 libxkbcommon-x11-0
+
+      - name: Install and smoke-test the wheel outside the checkout
+        run: |
+          conda install -y -c conda-forge napari "pyqt6>=6.7" pip
+          napari_version=$(python -c 'from importlib.metadata import version; print(version("napari"))')
+          cd "$(mktemp -d)"
+          python -m pip install "$GITHUB_WORKSPACE"/dist/*.whl
+          python -I - "$napari_version" <<'PY'
+          import sys
+          from importlib.metadata import version
+          import napari
+          from npe2.manifest import PluginManifest
+
+          assert version("napari") == sys.argv[1], "The plugin installation replaced the conda Napari version"
+          manifest = PluginManifest.from_distribution("napari-atlas-cci")
+          viewer = napari.Viewer(show=False)
+          try:
+              _, widget = viewer.window.add_plugin_dock_widget(manifest.name, "AtlasCCI")
+              assert widget.__class__.__name__ == "AtlasCCIWidget"
+              print("Plugin discovered and widget created successfully.")
+          finally:
+              viewer.close()
+          PY
+
+      - name: Save the verified distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ github.event_name == 'push' && format('{0}-distributions', github.ref_name) || format('plugin-rehearsal-{0}', github.run_id) }}
+          path: |
+            dist/*.tar.gz
+            dist/*.whl
+          if-no-files-found: error
