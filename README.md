@@ -3,6 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/atlas-cci-align)](https://pypi.org/project/atlas-cci-align/)
 [![Python 3.11 and 3.12](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](backend/README.md#install)
 [![Tests](https://github.com/CCI-GU-Sweden/ATLAS/actions/workflows/CI.yaml/badge.svg?branch=main)](https://github.com/CCI-GU-Sweden/ATLAS/actions/workflows/CI.yaml)
+[![Docs](https://img.shields.io/badge/docs-ATLAS-blue)](https://cci-gu-sweden.github.io/ATLAS/)
 [![Documentation build](https://github.com/CCI-GU-Sweden/ATLAS/actions/workflows/docs-build.yml/badge.svg?branch=main)](https://github.com/CCI-GU-Sweden/ATLAS/actions/workflows/docs-build.yml)
 [![MIT license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
