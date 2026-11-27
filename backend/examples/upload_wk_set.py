@@ -6,9 +6,7 @@ from webknossos.dataset.remote_folder import RemoteFolder
 
 from pathlib import Path
 
-INPUT_DIR = Path(r"E:\PROJECTS\EM\LUKE\TA27\out_1b")
-ORG_ID = "8f72d77498ee7bdf"
-MY_SET_NAME = "TA_27_ROI_1B_10nm"
+INPUT_DIR = Path("/path/to/local-webknossos-dataset")
 
 def main() -> None:
     token = os.environ.get("WK_TARGET_TOKEN")

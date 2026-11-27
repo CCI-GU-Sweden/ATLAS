@@ -1,21 +1,23 @@
+import os
 from pathlib import Path
 
 from webknossos import COLOR_CATEGORY, Dataset, webknossos_context
 from webknossos.dataset.sampling_modes import SamplingModes
 from webknossos.geometry.mag import Mag
 
-name_no_extension = "Palmer_5nm_mut_260925"
-data_dir = Path(r"E:\PROJECTS\EM\Ruth P-liver\high resolution 20260925\export")
+name_no_extension = "your_dataset"
+data_dir = Path("/path/to/czi-folder")
 xy_pix_nm = 10
 z_pix_nm = 75
 
 INPUT_DIR = data_dir / f"{name_no_extension}.czi"
-OUTPUT_DIR = Path(r"E:\PROJECTS\EM\Ruth P-liver\high resolution 20260925\export\out")
-ORG_ID = "8f72d77498ee7bdf"
-TOKEN = "---"
+OUTPUT_DIR = Path("/path/to/output-dataset")
+TOKEN = os.environ.get("WK_TARGET_TOKEN", "")
 MY_SET_NAME = name_no_extension.replace(" ", "_")
 
 def main(do_upload=False) -> None:
+    if do_upload and not TOKEN:
+        raise SystemExit("Set WK_TARGET_TOKEN before uploading to WEBKNOSSOS.")
     with webknossos_context(token=TOKEN):
             
         """Convert czi file to a WEBKNOSSOS dataset."""
@@ -47,4 +49,4 @@ def main(do_upload=False) -> None:
 
 
 if __name__ == "__main__":
-    main(True)
+    main()

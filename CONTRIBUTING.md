@@ -34,11 +34,10 @@ Open `http://127.0.0.1:8000/ATLAS/` to preview the site. The **Documentation**
 workflow also builds the site on GitHub and lets reviewers download the
 generated HTML as an artifact.
 
-For the first deployment, select **GitHub Actions** as the source in the
-ATLAS repository's **Settings → Pages**. After the docs PR is merged and
-reviewed, run **Documentation** on `main` and select **Publish the main branch
-to GitHub Pages**. Open the URL reported by the deployment and verify the home
-page, the backend pages, and their links.
+After documentation changes are merged, run **Documentation** on `main` and
+select **Publish the main branch to GitHub Pages**. Open the URL reported by
+the deployment and verify the pages and links. The repository's **Settings →
+Pages** source must be set to **GitHub Actions**.
 
 ## Release the backend
 
@@ -47,11 +46,8 @@ Git tag by setuptools-scm. Use an explicit `vX.Y.Z` tag for a stable release or
 `vX.Y.ZrcN` for a release candidate. Before choosing a version, check existing
 Git tags and PyPI releases. Use a new version for any changed source.
 
-1. Before merging the release workflow transition, disable the legacy
-   **Release** workflow in GitHub Actions. Leave **CI** enabled. On PyPI,
-   configure the ATLAS Trusted Publisher to use
-   `publish-backend-pypi.yml` and remove the legacy `release.yml` publisher
-   once the new setup is ready.
+1. Ensure the `atlas-cci-align` PyPI Trusted Publisher is configured for
+   `publish-backend-pypi.yml`.
 2. In GitHub Actions, use **Run workflow** on **Build backend release** to
    rehearse the build without creating a tag or publishing anything.
 3. For a release, select a reviewed commit on `main` with passing CI. From a
@@ -90,8 +86,8 @@ version, and update `plugin/CHANGELOG.md` for the release.
 
    ```sh
    git fetch origin --tags
-   git tag -a napari-v1.2.0rc1 <commit-sha> -m "Release napari-atlas-cci 1.2.0rc1"
-   git push origin refs/tags/napari-v1.2.0rc1
+   git tag -a napari-vX.Y.Z <commit-sha> -m "Release napari-atlas-cci X.Y.Z"
+   git push origin refs/tags/napari-vX.Y.Z
    ```
 
 4. Review the tagged **Build plugin release** run and its wheel and source
