@@ -52,7 +52,7 @@ select the same kernel there.
 | [Z alignment from TIFF](ATLAS-z-align.ipynb) | Align a series from existing stitched TIFFs using the earlier workflow. |
 | [Fine alignment](ATLAS-fine-alignment.ipynb) | Explore finer registration of previously stitched sections. |
 | [OME companion metadata](ATLAS-ome-companion.ipynb) | Generate OME-XML companion metadata from ATLAS TIFF tiles. Install the extra dependency with `python -m pip install ome-types` in `atlas-env` before running this notebook. |
-| [Create a WEBKNOSSOS dataset from CZI](create_wk_set_from_czi.py) | Convert a CZI to a local WEBKNOSSOS dataset and build a downsampling pyramid. The script also supports upload. |
+| [Create a WEBKNOSSOS dataset from CZI](create_wk_set_from_czi.py) | Convert a CZI to a local WEBKNOSSOS dataset and build a downsampling pyramid. To upload, set `WK_TARGET_TOKEN` and call `main(do_upload=True)`. |
 | [Upload a WEBKNOSSOS dataset](upload_wk_set.py) | Upload an existing local WEBKNOSSOS dataset. Set the input directory and provide the token through `WK_TARGET_TOKEN`. |
 | [Transfer a WEBKNOSSOS annotation region](transfer_wk_annotation_region.py) | Download an image region defined by a bounding box and optionally upload it to another organization. Set `DO_UPLOAD = False` for download only. |
 

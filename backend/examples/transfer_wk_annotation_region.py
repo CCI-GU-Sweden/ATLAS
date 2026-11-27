@@ -13,7 +13,7 @@ from cluster_tools import get_executor
 
 
 # User inputs. Tokens may be set here or through the environment variables.
-ANNOTATION_ID = "6ad8bc086d9958fcd0aa68b5"
+ANNOTATION_ID = "your-annotation-id"
 SOURCE_TOKEN = os.environ.get("WK_SOURCE_TOKEN", "")
 TARGET_TOKEN = os.environ.get("WK_TARGET_TOKEN", "")
 SOURCE_URL = "https://webknossos.org"
