@@ -29,7 +29,7 @@ dependencies = [
     "scipy",
     "ome-zarr",
     "dask",
-    "webknossos>=4.0.0,<5",
+    "webknossos>=5.1.0,<6",
     "pylibCZIrw",
     "atlas-cci-align>=1.3.19"
 ]

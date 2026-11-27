@@ -53,16 +53,10 @@ $env:QT_API = "pyqt6"
 napari
 ```
 
-### Known dependency conflicts
+### WebKnossos compatibility
 The plugin uses webknossos to create and upload datasets to webKnossos.
-Currently, webknossos 4.3.3 specifies dependency versions that conflict
-with requirements of newer napari environments.
-
-Installation may therefore report conflicts involving psutil, rich,
-and typer.
-
-We have successfully tested dataset creation and upload using
-webknossos 4.3.3 with napari 0.10.0. This is a temporary compatibility workaround.
+It requires webknossos 5.1 or later within the 5.x series. Version 5.1.0
+has been tested with the plugin in a napari environment.
 
 ### Create a desktop launcher
 

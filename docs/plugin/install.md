@@ -58,13 +58,11 @@ napari
 For Linux `xcb` errors or other GUI setup issues, see the
 [napari installation guide](https://napari.org/stable/tutorials/fundamentals/installation.html).
 
-## Known dependency conflict
+## WebKnossos compatibility
 
-The plugin uses `webknossos` for dataset creation and upload. Version 4.3.3
-specifies versions that can conflict with requirements in newer napari
-environments, producing resolver warnings involving `psutil`, `rich`, or
-`typer`. Dataset creation and upload have been tested with webknossos 4.3.3
-and napari 0.10.0; this is a temporary compatibility workaround.
+The plugin uses `webknossos` for dataset creation and upload. It requires
+version 5.1 or later within the 5.x series. Version 5.1.0 has been tested
+with the plugin in a napari environment.
 
 ## Update
 

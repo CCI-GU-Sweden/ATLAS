@@ -4,6 +4,11 @@ Notable changes are recorded here. Entries for version 1.1.9 and earlier were
 reconstructed from Git history and summarize the main changes rather than
 every fix. Dates are the dates recorded on the Git tags.
 
+## Unreleased
+
+- Require WebKnossos 5.1 or later within the 5.x series to support current
+  Napari dependencies.
+
 ## 1.2.0rc1
 
 The plugin is now developed in the ATLAS repository under `plugin/`.
