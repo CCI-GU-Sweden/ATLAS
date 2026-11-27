@@ -4,10 +4,12 @@ Notable changes are recorded here. Entries for version 1.1.9 and earlier were
 reconstructed from Git history and summarize the main changes rather than
 every fix. Dates are the dates recorded on the Git tags.
 
-## Unreleased
+## 1.2.0
 
 - Require WebKnossos 5.1 or later within the 5.x series to support current
   Napari dependencies.
+- Derive the plugin version from its own release tags.
+- Include the features and fixes listed under 1.2.0rc1 below.
 
 ## 1.2.0rc1
 

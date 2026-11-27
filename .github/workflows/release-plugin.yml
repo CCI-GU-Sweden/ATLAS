@@ -39,17 +39,6 @@ jobs:
             echo "The release tag must point to a commit on main." >&2
             exit 1
           fi
-          python3 - <<'PY'
-          import os
-          import tomllib
-          from pathlib import Path
-
-          version = tomllib.loads(Path("plugin/pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
-          expected = f"napari-v{version}"
-          if os.environ["GITHUB_REF_NAME"] != expected:
-              raise SystemExit(f"Expected {expected}, got {os.environ['GITHUB_REF_NAME']}.")
-          PY
-
       - uses: conda-incubator/setup-miniconda@v3
         with:
           miniforge-version: latest
