@@ -21,3 +21,16 @@ aligned stack for viewing and further analysis.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development and release instructions
 and [LICENSE](LICENSE) for the project's MIT license.
+
+## Contributors in alphabetic order
+
+- **[Bosio, Noemi](https://orcid.org/0000-0001-6294-4152)**
+- **[Camacho, Rafael](https://orcid.org/0000-0003-2325-6407)**
+- **[Fernandez-Rodriguez, Julia](https://orcid.org/0000-0003-4522-0966)**
+- **[Gupta, Ketan](https://orcid.org/0009-0000-9875-7324)**
+- **[Leclerc, Simon](https://orcid.org/0000-0003-1611-7572)**
+
+Contributions to ATLAS include experiments, scientific discussions, microscopy
+expertise, and software development, and are not limited to repository commits.
+We also thank current and past Centre for Cellular Imaging colleagues for their
+shared expertise, discussions, and laboratory input.
