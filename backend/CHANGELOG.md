@@ -1,9 +1,13 @@
 # atlas-cci-align changelog
 
-## Unreleased
+## 1.4.0
 
 - Move the backend and Python examples into `backend/`. The published
   distribution name and `atlas` import stay the same.
+- Keep backend version discovery independent of Napari plugin tags.
+- Adopt explicit release tags and publish reviewed build artifacts.
+- Declare and include the MIT license in distributions, and exclude notebooks,
+  standalone scripts, experiments, and CI workflows from the source archive.
 
 ## 1.4.0rc1 — 2026-11-25
 
