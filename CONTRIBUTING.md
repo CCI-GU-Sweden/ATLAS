@@ -75,13 +75,13 @@ Git tags and PyPI releases. Use a new version for any changed source.
 
 ## Release the Napari plugin
 
-The plugin's version is set in `plugin/pyproject.toml`, independently of the
+The plugin's version is derived from its Git tag, independently of the
 backend. Use `napari-vX.Y.ZrcN` for a release candidate or `napari-vX.Y.Z`
 for a stable release. Check existing tags and PyPI releases before choosing a
 version, and update `plugin/CHANGELOG.md` for the release.
 
-1. Set the candidate version in `plugin/pyproject.toml`, review it in a PR,
-   and merge it to `main`. Configure the `napari-atlas-cci` PyPI Trusted
+1. Update the changelog for the release, review it in a PR, and merge it to
+   `main`. Configure the `napari-atlas-cci` PyPI Trusted
    Publisher for this repository and `publish-plugin-pypi.yml`.
 2. Run **Build plugin release** on `main` without a tag to rehearse the
    build and widget discovery. The rehearsal does not publish to PyPI.

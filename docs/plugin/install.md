@@ -22,7 +22,7 @@ environment and run `napari` to start it again. The plugin installs the ATLAS
 backend as a dependency. The master Zarr workflow requires `atlas-cci-align`
 1.3.19 or later.
 
-The plugin checkout currently identifies itself as version `1.2.0rc1`. A plain
+The plugin checkout may contain changes newer than the published release. A plain
 `pip install napari-atlas-cci` installs the latest stable package available on
 the package index, which may not include the current watcher workflow or other
 recent changes. If you need features from this checkout, follow the editable
